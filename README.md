@@ -251,7 +251,7 @@ end
 
 *Output (if local `Project.toml` exists in the script directory)*:
 ```log
-┌ Warning: QuickEnv: Local Project.toml or Manifest.toml exists in the script's directory, but is being ignored because named environment @plotting is activated. QuickEnv tip... To silence this msg add magic comment: 'using QuickEnv  # silent'
+┌ Warning: QuickEnv: Local Project.toml or Manifest.toml exists in the script's directory, but is being ignored because named environment @plotting is activated. QuickEnv - To silence add magic comment: 'using QuickEnv  # silent'
 └ @ QuickEnv ~/.julia/packages/QuickEnv/.../QuickEnv.jl
 Running script in named environment @plotting...
 ```

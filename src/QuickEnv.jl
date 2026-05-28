@@ -13,7 +13,7 @@ ensuring it is shown at most once.
 """
 function print_silence_tip(is_silent::Bool)
     if !is_silent && !tip_printed[]
-        @info "QuickEnv tip... To silence this msg add magic comment: 'using QuickEnv  # silent'"
+        @info "QuickEnv - To silence add magic comment: 'using QuickEnv  # silent'"
         tip_printed[] = true
     end
 end
@@ -324,7 +324,7 @@ function warn_ignored_local_files(script_path::String, env_name::String, is_sile
         @warn "QuickEnv: Local Project.toml or Manifest.toml exists in the " *
               "script's directory, but is being ignored because named " *
               "environment @$env_name is activated. " *
-              "QuickEnv tip... To silence this msg add magic comment: 'using QuickEnv  # silent'"
+              "QuickEnv - To silence add magic comment: 'using QuickEnv  # silent'"
     end
     return nothing
 end
