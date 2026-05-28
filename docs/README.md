@@ -33,7 +33,7 @@ Pkg.develop(path="/home/sariel/prog/26/misc/julia_envs/QuickEnv")
 You can configure `QuickEnv` directly inside the comments of your Julia script. These comments are completely ignored by the standard Julia parser, making them 100% syntactically safe and standard.
 
 ### 1. Compact Inline Format (Recommended)
-You can declare fallback named environments, exclusions, quiet flags, and forced environment creation all on the same line as your import:
+You can declare fallback named environments, exclusions, silent flags, and forced environment creation all on the same line as your import:
 
 ```julia
 using QuickEnv # fallback: plotting, exclude: global, silent, create: data

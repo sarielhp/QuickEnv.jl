@@ -14,7 +14,14 @@ function (@main)(args)
     # Generate a simple plot
     x = 1:10
     y = rand(10)
-    p = plot(x, y, title="QuickEnv Test Plot", xlabel="X-Axis", ylabel="Y-Axis", label="Random Data")
+    p = plot(
+        x,
+        y;
+        title="QuickEnv Test Plot",
+        xlabel="X-Axis",
+        ylabel="Y-Axis",
+        label="Random Data",
+    )
 
     # Save to PDF (defaulting to Cairo PDF rendering)
     out_file = joinpath(out_dir, "plot.pdf")

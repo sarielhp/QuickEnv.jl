@@ -17,7 +17,7 @@ function (@main)(args)
     gr()
 
     # 1. Generate synthetic noisy data using SpecialFunctions.besselj
-    xdata = range(0.1, 10.0, length=50)
+    xdata = range(0.1, 10.0; length=50)
     # True parameters: amplitude = 2.5, frequency = 1.2
     ydata = model(xdata, [2.5, 1.2]) + 0.15 * randn(length(xdata))
 
@@ -28,14 +28,28 @@ function (@main)(args)
     fitted_params = fit.param
 
     # Generate smooth data for the fitted curve plot
-    xfit = range(0.1, 10.0, length=200)
+    xfit = range(0.1, 10.0; length=200)
     yfit = model(xfit, fitted_params)
 
     # 3. Plot the data points and the fitted Bessel curve using Plots
-    p = scatter(xdata, ydata, label="Noisy Data (Bessel)", title="Scientific Curve Fit",
-                xlabel="X-Axis", ylabel="Y-Axis", markercolor=:red, markersize=5)
-    plot!(p, xfit, yfit, label="Fitted Bessel (a=$(round(fitted_params[1], digits=2)), b=$(round(fitted_params[2], digits=2)))",
-          linecolor=:blue, linewidth=2.5)
+    p = scatter(
+        xdata,
+        ydata;
+        label="Noisy Data (Bessel)",
+        title="Scientific Curve Fit",
+        xlabel="X-Axis",
+        ylabel="Y-Axis",
+        markercolor=:red,
+        markersize=5,
+    )
+    plot!(
+        p,
+        xfit,
+        yfit;
+        label="Fitted Bessel (a=$(round(fitted_params[1], digits=2)), b=$(round(fitted_params[2], digits=2)))",
+        linecolor=:blue,
+        linewidth=2.5,
+    )
 
     # Save the output image as PDF (using Cairo PDF generator)
     out_file = joinpath(out_dir, "science_plot.pdf")

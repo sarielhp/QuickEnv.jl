@@ -147,7 +147,7 @@ Pkg.add(url="https://github.com/yourusername/QuickEnv.jl.git")
 2. **Standalone Multiline Format**: Declared as separate comments at the top of the file.
 
 ### A. Compact inline format (recommended)
-You can declare fallback named environments, exclusions, quiet flags, and forced environment creation all on the same line as your import:
+You can declare fallback named environments, exclusions, silent flags, and forced environment creation all on the same line as your import:
 
 ```julia
 using QuickEnv # fallback: plotting, exclude: global, silent, create: data

@@ -9,10 +9,10 @@ function (@main)(args)
     isdir(out_dir) || mkdir(out_dir)
 
     # Create a DataFrame using DataFrames.jl
-    df = DataFrame(
-        ID = 1:5,
-        Name = ["Alice", "Bob", "Charlie", "David", "Eve"],
-        Score = [85.5, 92.0, 78.3, 88.9, 95.2]
+    df = DataFrame(;
+        ID=1:5,
+        Name=["Alice", "Bob", "Charlie", "David", "Eve"],
+        Score=[85.5, 92.0, 78.3, 88.9, 95.2],
     )
 
     # Save to CSV using CSV.jl
