@@ -60,6 +60,13 @@ function __init__()
         # Bootstrap: Automatically install missing packages in the active environment
         project_file = Base.active_project()
         if project_file !== nothing
+            # Safety Check: Prevent adding packages to the global environment
+            env_name = basename(dirname(project_file))
+            if occursin(r"^v\d+\.\d+$", env_name)
+                @warn "QuickEnv: Safety check triggered. Blocked installation of packages into the global environment ($env_name)."
+                return
+            end
+
             deps = Dict{String, Any}()
             if isfile(project_file)
                 try
