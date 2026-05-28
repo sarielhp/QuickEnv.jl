@@ -16,7 +16,7 @@ Julia developers typically manage package environments in three ways, each with 
 2. **Local Directory Projects (`--project=.`)**: Highly reproducible, but creates massive file clutter and repetitive setup overhead for single-file scripts or quick calculations. Furthermore, it results in huge disk footprint and compile-time bloat due to redundant package downloads and precompilations.
 3. **Shared Named Environments (`@plotting`, `@data`)**: The hybrid solution. Grouping related workflows into shared, globally accessible environments.
 
-**QuickEnv.jl is the ultimate automation layer on top of named and local environments.**
+**QuickEnv.jl is an automation layer on top of named and local environments.**
 
 When you place `using QuickEnv` at the top of a script, it scans your code imports on-the-fly and automatically resolves them:
 - **First Choice**: Finds and activates an existing global **named environment** that already satisfies your script's imports (saving disk space and compile time).
@@ -137,7 +137,7 @@ end
 ## ⚙️ Technical Architecture and Specifications
 
 ### 1. Script Parsing Logic
-`QuickEnv.jl` reads the running script line-by-line before other packages load. It uses an incredibly clean and exact regex parser that:
+`QuickEnv.jl` reads the running script line-by-line before other packages load. It uses a clean and exact regex parser that:
 - Removes trailing or inline comments to prevent false parsing.
 - Handles Julia's standard colon import syntax (`using Module: item1, item2`). By splitting on the first colon (`:`), it correctly identifies `Module` as the package dependency and ignores the imported sub-items (e.g., types or functions starting with an uppercase letter).
 - Extracts aliases correctly (e.g., `import Package as PkgAlias`).
@@ -169,9 +169,9 @@ julia --project=QuickEnv QuickEnv/test/runtests.jl
 
 Contributions, bug reports, and pull requests are highly welcome!
 1. Fork this repository.
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`).
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`).
-4. Push to the branch (`git push origin feature/AmazingFeature`).
+2. Create your feature branch (`git checkout -b feature/NewFeature`).
+3. Commit your changes (`git commit -m 'Add some NewFeature'`).
+4. Push to the branch (`git push origin feature/NewFeature`).
 5. Open a Pull Request.
 
 ---
