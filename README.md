@@ -4,11 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Julia Version](https://img.shields.io/badge/julia-v1.6+-8A2BE2.svg)](https://julialang.org/)
 
-`QuickEnv.jl` is a zero-configuration, auto-bootstrapping environment
-manager for Julia scripts. It brings Pluto-like automated package
-management elegance to standard standalone `.jl` scripts, dynamically
-resolving and isolating dependencies without directory clutter or
-manual project initialization.
+`QuickEnv.jl` is a zero-configuration, auto-bootstrapping environment manager for Julia scripts. It automates package management for standard standalone `.jl` scripts, dynamically resolving and isolating dependencies without directory clutter or manual project initialization.
 
 ---
 
@@ -35,11 +31,7 @@ using Plots
 
 ```
 
-Now, just run it! Everything would just work (after installing
-QuickEnv in your global environment one time [sorry]). QuickEnv would
-take care of making things work by installing the missing packages in
-the local environment, etc. Running the program for the second time
-once the environment is setup, is well, quick.
+Now, just run it. After installing `QuickEnv` once in your global environment, it automatically resolves and installs any missing packages in the local environment. Subsequent runs execute quickly once the environment is set up.
 
 There is an important exception to the above behavior: If QuickEnv finds any existing [named environment](#-understanding-shared-named-environments) satisfying your imports (e.g. `@plotting`), it uses it instead. That creates a convenient way to have several default environments that would fit many Julia programs.
 
@@ -51,11 +43,7 @@ Julia developers typically manage package environments in three ways, each with 
 
 1. **The Global Environment (`@v1.x`)**: Easy to use, but eventually leads to version conflict deadlocks ("Dependency Hell") as different packages declare conflicting version constraints.
 
-2. **Local Directory Projects (`--project=.`)**: Highly reproducible,
-   but creates massive file clutter and repetitive setup overhead for
-   single-file scripts or quick calculations. Furthermore, it results
-   in huge disk footprint and compile-time bloat due to redundant
-   package downloads and precompilations.
+2. **Local Directory Projects (`--project=.`)**: Reproducible, but creates directory clutter and repetitive setup overhead for single-file scripts or quick calculations. Furthermore, it results in additional disk space usage and compile-time overhead due to redundant package downloads and precompilations.
 
 3. **Shared Named Environments (`@plotting`, `@data`)**: The hybrid solution. Grouping related workflows into shared, globally accessible environments.
 
@@ -108,8 +96,7 @@ No. Out of the box, Julia does not ship with any pre-made named environments (li
 
 The only built-in shared environment provided by Julia is the standard versioned global environment (e.g., `@v1.12` or `@v1.10`), which is activated by default when starting Julia without a project directory. Any other named environment must be created by you (or automatically bootstrapped by `QuickEnv.jl` on demand).
 
-To understand why they are highly useful, it is helpful to compare the
-three package management paradigms in Julia:
+To understand their role, it is helpful to compare the three package management paradigms in Julia:
 
 ### 1. The global environment (`@v1.x`)
 - **How it works**: By default, if you run Julia without specifying a project directory, packages are installed in the global scope.
@@ -118,14 +105,14 @@ three package management paradigms in Julia:
 
 ### 2. Local directory projects (`--project=.`)
 - **How it works**: Tracks package dependencies inside a specific project folder using `Project.toml` and `Manifest.toml` files.
-- **The Problem**: While ideal for shared repositories, it creates **directory clutter** and **massive disk/compilation overhead** for one-off calculations or single scripts. You are forced to create a new folder and wait for packages to compile redundantly for every script.
+- **The Problem**: While ideal for shared repositories, it creates directory clutter and disk/compilation overhead for one-off calculations or single scripts. You are forced to create a new folder and compile packages redundantly for each script.
 
 ### 3. Shared named environments (the hybrid solution)
 - **How it works**: You group related packages into named, globally accessible scopes (like `@plotting` for graphics, or `@data` for data handling).
-- **The Benefit**: They are the perfect compromise. 
+- **The Benefit**: They offer a compromise:
   - **No Conflict**: Keeps your global scope clean, avoiding dependency deadlocks.
-  - **No Clutter**: No need to create folders or project files for every standalone script.
-  - **Instant Load**: Since packages are resolved once in the shared named environment, your scripts **compile and load instantly** on subsequent runs.
+  - **No Clutter**: No need to create folders or project files for standalone scripts.
+  - **Instant Load**: Since packages are resolved once in the shared named environment, your scripts compile and load quickly on subsequent runs.
 - **The Problem**: To run a script inside a shared named environment, you must manually remember its name and explicitly pass it on the command line every single time (e.g., `julia --project=@plotting script.jl`). If you forget to include the flag, the script runs in the wrong environment (usually the global scope).
 
 ---
@@ -194,14 +181,14 @@ Forces `QuickEnv` to use and manage a specific named environment.
 ```julia
 # quickenv_silent: true
 ```
-*Completely suppresses all `QuickEnv` and `Pkg` environment activation logs during load time.*
+*Suppresses all `QuickEnv` and `Pkg` environment activation logs during load time.*
 
 ---
 
 ## 💻 Code examples
 
 ### Example A: Global environment isolation & plotting (unified inline format)
-This script prevents itself from running in the global environment, sets `@plotting` as the fallback environment, and executes completely silently:
+This script prevents itself from running in the global environment, sets `@plotting` as the fallback environment, and executes silently:
 
 ```julia
 #!/usr/bin/env julia
@@ -220,7 +207,7 @@ end
 ```
 
 ### Example B: Dedicated named fallback & data setup (unified inline format)
-This script requests a dedicated named environment `@data`. If no environment currently contains both `DataFrames` and `CSV`, it will automatically create `@data`, download/compile the packages, and run completely silently:
+This script requests a dedicated named environment `@data`. If no environment currently contains both `DataFrames` and `CSV`, it will automatically create `@data`, download/compile the packages, and run silently:
 
 ```julia
 #!/usr/bin/env julia
@@ -242,8 +229,8 @@ end
 ## ⚙️ Technical architecture and specifications
 
 ### 1. Script parsing logic
-`QuickEnv.jl` reads the running script line-by-line before other packages load. It uses a clean and exact regex parser that:
-- Removes trailing or inline comments to prevent false parsing.
+`QuickEnv.jl` reads the running script line-by-line before other packages load. It uses a regex parser that:
+- Removes trailing or inline comments to prevent incorrect parsing.
 - Handles Julia's standard colon import syntax (`using Module: item1, item2`). By splitting on the first colon (`:`), it correctly identifies `Module` as the package dependency and ignores the imported sub-items (e.g., types or functions starting with an uppercase letter).
 - Extracts aliases correctly (e.g., `import Package as PkgAlias`).
 
@@ -251,7 +238,7 @@ end
 - Scans `DEPOT_PATH[1]/environments/` for active subdirectories containing a `Project.toml` file.
 - Reads `deps` maps to locate satisfying package lists.
 - Filters matches using the `quickenv_exclude` lists and automatically strips standard versioned environments if an explicit `quickenv_fallback` is provided.
-- Prioritizes custom user-named environments over global ones to ensure high structural isolation.
+- Prioritizes custom user-named environments over global ones to ensure structural isolation.
 
 ### 3. Bootstrap activation
 - Calls `Pkg.activate(env, shared=true)` dynamically inside the session's precompilation initialization (`__init__()`).
@@ -262,7 +249,7 @@ end
 
 ## 📂 Reference examples
 
-You can find the complete, runnable scripts in the [examples/](examples/) directory:
+You can find the runnable scripts in the [examples/](examples/) directory:
 
 - [example_plotting.jl](examples/example_plotting.jl): Demonstrates plotting using the `@plotting` named environment. Uses the `gr()` backend and Cairo to export a PDF plot to `output/plot.pdf`.
 - [example_data.jl](examples/example_data.jl): Demonstrates data handling using the `@data` named environment. Automatically creates the environment and silently installs `DataFrames.jl` and `CSV.jl` to write to `output/data.csv`.
@@ -272,7 +259,7 @@ You can find the complete, runnable scripts in the [examples/](examples/) direct
 
 ## 🧪 Testing
 
-To run the full test suite and verify metadata parsing, environment matching, and filtering logic:
+To run the test suite and verify metadata parsing, environment matching, and filtering logic:
 
 ```bash
 julia --project=QuickEnv QuickEnv/test/runtests.jl
@@ -282,7 +269,7 @@ julia --project=QuickEnv QuickEnv/test/runtests.jl
 
 ## 🤝 Contributing
 
-Contributions, bug reports, and pull requests are highly welcome!
+Contributions, bug reports, and pull requests are welcome.
 1. Fork this repository.
 2. Create your feature branch (`git checkout -b feature/NewFeature`).
 3. Commit your changes (`git commit -m 'Add some NewFeature'`).
