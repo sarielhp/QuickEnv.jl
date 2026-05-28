@@ -278,6 +278,14 @@ Contributions, bug reports, and pull requests are welcome.
 
 ---
 
+## Disclaimer
+
+Most the package was written using antigravity-cli. However, I (a real
+human) reviewed the code and it seems OK to me. This is hopefully a
+useful package and not just AI generated junk. I would of course
+handle any bugs/issues.
+
+
 ## 📄 License
 
 Distributed under the MIT License. See `LICENSE` for more information.
