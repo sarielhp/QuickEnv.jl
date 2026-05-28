@@ -260,6 +260,16 @@ end
 
 ---
 
+## 📂 Reference examples
+
+You can find the complete, runnable scripts in the [examples/](examples/) directory:
+
+- [example_plotting.jl](examples/example_plotting.jl): Demonstrates plotting using the `@plotting` named environment. Uses the `gr()` backend and Cairo to export a PDF plot to `output/plot.pdf`.
+- [example_data.jl](examples/example_data.jl): Demonstrates data handling using the `@data` named environment. Automatically creates the environment and silently installs `DataFrames.jl` and `CSV.jl` to write to `output/data.csv`.
+- [example_science.jl](examples/example_science.jl): Demonstrates forced environment creation using the `# create: science` magic comment. Automatically installs `SpecialFunctions.jl` and `LsqFit.jl` to perform a non-linear curve fit and export the result to `output/science_plot.pdf`.
+
+---
+
 ## 🧪 Testing
 
 To run the full test suite and verify metadata parsing, environment matching, and filtering logic:
