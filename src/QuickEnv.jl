@@ -446,9 +446,26 @@ function parse_standalone_comments(line::String)
     description = ""
 
     # 1. Parse standalone fallback magic comment
-    m_fallback = match(r"^\s*#\s*quickenv_fallback\s*:\s*([a-zA-Z0-9_\-]+)", line)
+    m_fallback = match(r"^\s*#\s*quickenv_fallback\s*:\s*(.*)$", line)
     if m_fallback !== nothing
-        fallback_env = String(m_fallback.captures[1])
+        content = m_fallback.captures[1]
+        m_name = match(r"^\s*([a-zA-Z0-9_\-]+)", content)
+        if m_name !== nothing
+            fallback_env = String(m_name.captures[1])
+        end
+        m_inline_desc = match(r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", content)
+        if m_inline_desc !== nothing
+            raw_desc = nothing
+            for cap in m_inline_desc.captures
+                if cap !== nothing
+                    raw_desc = cap
+                    break
+                end
+            end
+            if raw_desc !== nothing
+                description = String(strip(raw_desc))
+            end
+        end
     end
 
     # 2. Parse standalone exclude magic comment (comma-separated list of
@@ -462,10 +479,27 @@ function parse_standalone_comments(line::String)
 
     # 3. Parse standalone QuickEnv.create magic comment
     m_create = match(
-        r"^\s*#\s*(?:QuickEnv\.create|quickenv_create)\s*:\s*([a-zA-Z0-9_\-]+)", line
+        r"^\s*#\s*(?:QuickEnv\.create|quickenv_create)\s*:\s*(.*)$", line
     )
     if m_create !== nothing
-        create_env = String(m_create.captures[1])
+        content = m_create.captures[1]
+        m_name = match(r"^\s*([a-zA-Z0-9_\-]+)", content)
+        if m_name !== nothing
+            create_env = String(m_name.captures[1])
+        end
+        m_inline_desc = match(r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", content)
+        if m_inline_desc !== nothing
+            raw_desc = nothing
+            for cap in m_inline_desc.captures
+                if cap !== nothing
+                    raw_desc = cap
+                    break
+                end
+            end
+            if raw_desc !== nothing
+                description = String(strip(raw_desc))
+            end
+        end
     end
 
     # 4. Parse standalone description magic comment

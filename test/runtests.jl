@@ -123,6 +123,42 @@ using Test
         finally
             rm(tmp_path_d3)
         end
+
+        # Test Standalone quickenv_fallback with desc option
+        mock_script_fallback_with_desc = """
+        #!/usr/bin/env julia
+        # quickenv_fallback: plotting_test, desc: "Fallback desc test"
+        using QuickEnv
+        """
+        tmp_path_f, io_f = mktemp()
+        try
+            write(io_f, mock_script_fallback_with_desc)
+            close(io_f)
+
+            _, fallback_env_f, _, _, _, description_f = QuickEnv.parse_script_metadata(tmp_path_f)
+            @test fallback_env_f == "plotting_test"
+            @test description_f == "Fallback desc test"
+        finally
+            rm(tmp_path_f)
+        end
+
+        # Test Standalone QuickEnv.create with desc option
+        mock_script_create_with_desc = """
+        #!/usr/bin/env julia
+        # QuickEnv.create: data_test, desc: "Create desc test"
+        using QuickEnv
+        """
+        tmp_path_c, io_c = mktemp()
+        try
+            write(io_c, mock_script_create_with_desc)
+            close(io_c)
+
+            _, _, _, _, create_env_c, description_c = QuickEnv.parse_script_metadata(tmp_path_c)
+            @test create_env_c == "data_test"
+            @test description_c == "Create desc test"
+        finally
+            rm(tmp_path_c)
+        end
     end
 
     @testset "Project.toml Description Write" begin
