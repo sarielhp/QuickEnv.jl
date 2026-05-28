@@ -8,17 +8,18 @@
 
 using QuickEnv # silent, create: packaging
 using Pkg
-using TOML
+using Crayons
 using Printf
+using TOML
 
-# Core terminal colors using standard ANSI escape codes
-bold(s) = "\e[1m$s\e[22m"
-red(s) = "\e[31m$s\e[0m"
-green(s) = "\e[32m$s\e[0m"
-yellow(s) = "\e[33m$s\e[0m"
-blue(s) = "\e[34m$s\e[0m"
-cyan(s) = "\e[36m$s\e[0m"
-gray(s) = "\e[90m$s\e[0m"
+# Core terminal colors using standard Crayons package
+bold(s) = string(Crayon(bold=true), s, Crayon(reset=true))
+red(s) = string(Crayon(foreground=:red), s, Crayon(reset=true))
+green(s) = string(Crayon(foreground=:green), s, Crayon(reset=true))
+yellow(s) = string(Crayon(foreground=:yellow), s, Crayon(reset=true))
+blue(s) = string(Crayon(foreground=:blue), s, Crayon(reset=true))
+cyan(s) = string(Crayon(foreground=:cyan), s, Crayon(reset=true))
+gray(s) = string(Crayon(foreground=:dark_gray), s, Crayon(reset=true))
 
 const ENV_DIR = joinpath(homedir(), ".julia", "environments")
 

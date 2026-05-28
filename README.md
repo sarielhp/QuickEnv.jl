@@ -278,6 +278,59 @@ Contributions, bug reports, and pull requests are welcome.
 
 ---
 
+## 🛠️ The `julia_envs.jl` CLI Tool
+
+To make managing your custom named environments and scripts effortless, `QuickEnv` includes a colorful, standalone command-line tool located under `tools/julia_envs.jl`. 
+
+### Key Features
+
+* **Environment Directory Listing (`list`)**: Displays all your named environments along with custom description headers.
+* **Environment Inspection (`show`)**: Shows all registered packages and direct dependencies for a specified environment.
+* **Automatic Creation (`create`)**: Automatically scans a standalone Julia script for imported packages, creates a new named environment, and installs all the dependencies.
+* **Smart Matching & Running (`match` / `mrun`)**: Finds existing custom environments satisfying a script's dependencies, or directly executes the script inside a matching environment.
+* **General Registry Search (`search`)**: Fast, in-process search of the official Julia General Registry for any package query.
+
+### Usage and Subcommands
+
+```bash
+# List all environments and descriptions
+./tools/julia_envs.jl list
+
+# Show registered packages in an environment
+./tools/julia_envs.jl show @plotting
+
+# Add packages to an environment
+./tools/julia_envs.jl add @plotting DataStructures DataFrames
+
+# Add/change the description of an environment
+./tools/julia_envs.jl describe @plotting "Plotting environment with Plots.jl and Cairo"
+
+# Create an environment from a Julia script
+./tools/julia_envs.jl create @math_env solve_inequality.jl
+
+# Find environments that can run a script
+./tools/julia_envs.jl match plot_inequality.jl
+
+# Run a Julia script in a matching named environment
+./tools/julia_envs.jl mrun plot_inequality.jl
+
+# Run a Julia script in a specified named environment
+./tools/julia_envs.jl run @plotting plot_inequality.jl
+
+# Launch Julia REPL in a named environment
+./tools/julia_envs.jl repl @plotting
+
+# Delete a named environment
+./tools/julia_envs.jl rm @test_env
+
+# Search General Registry for a package
+./tools/julia_envs.jl search DataStructures
+```
+
+Like other standalone scripts managed by `QuickEnv.jl`, the CLI tool automatically bootstraps its own dependencies (such as `Crayons.jl` for beautiful, terminal-independent coloring) on its first run under zero-configuration named environment isolation.
+
+---
+
 ## Disclaimer
 
 Most the package was written using antigravity-cli. However, I (a real
