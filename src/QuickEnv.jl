@@ -394,7 +394,7 @@ function parse_inline_options(line::String)
     end
 
     # 4. Parse inline description
-    m_inline_desc = match(r"(?i)\bdescription\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", comment_part)
+    m_inline_desc = match(r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", comment_part)
     if m_inline_desc !== nothing
         raw_desc = nothing
         for cap in m_inline_desc.captures
@@ -416,7 +416,7 @@ function parse_inline_options(line::String)
         # appear after 'exclude:'
         raw_excl = replace(raw_excl, r"(?i)\bfallback\s*:\s*[a-zA-Z0-9_\-]+" => "")
         raw_excl = replace(raw_excl, r"(?i)\bcreate\s*:\s*[a-zA-Z0-9_\-]+" => "")
-        raw_excl = replace(raw_excl, r"(?i)\bdescription\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))" => "")
+        raw_excl = replace(raw_excl, r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))" => "")
         raw_excl = replace(raw_excl, r"(?i)\bsilent\b" => "")
 
         for item in split(raw_excl, ',')
@@ -469,7 +469,7 @@ function parse_standalone_comments(line::String)
     end
 
     # 4. Parse standalone description magic comment
-    m_desc = match(r"^\s*#\s*(?:QuickEnv\.description|quickenv_description)\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|(.*))$", line)
+    m_desc = match(r"^\s*#\s*(?:QuickEnv\.desc(?:ription)?|quickenv_desc(?:ription)?)\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|(.*))$", line)
     if m_desc !== nothing
         raw_desc = nothing
         for cap in m_desc.captures

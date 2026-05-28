@@ -90,6 +90,39 @@ using Test
         finally
             rm(tmp_path_d)
         end
+
+        # Test Standalone QuickEnv.desc parsing
+        mock_script_standalone_desc_short = """
+        #!/usr/bin/env julia
+        # QuickEnv.desc: Standalone short desc test
+        using QuickEnv
+        """
+        tmp_path_d2, io_d2 = mktemp()
+        try
+            write(io_d2, mock_script_standalone_desc_short)
+            close(io_d2)
+
+            _, _, _, _, _, description_d2 = QuickEnv.parse_script_metadata(tmp_path_d2)
+            @test description_d2 == "Standalone short desc test"
+        finally
+            rm(tmp_path_d2)
+        end
+
+        # Test Inline desc parsing
+        mock_script_inline_desc_short = """
+        #!/usr/bin/env julia
+        using QuickEnv # desc: "Inline short desc test"
+        """
+        tmp_path_d3, io_d3 = mktemp()
+        try
+            write(io_d3, mock_script_inline_desc_short)
+            close(io_d3)
+
+            _, _, _, _, _, description_d3 = QuickEnv.parse_script_metadata(tmp_path_d3)
+            @test description_d3 == "Inline short desc test"
+        finally
+            rm(tmp_path_d3)
+        end
     end
 
     @testset "Project.toml Description Write" begin
