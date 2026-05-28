@@ -234,6 +234,28 @@ function (@main)(args)
 end
 ```
 
+### Example C: Named environment with local files warning (non-silent mode)
+This script requests the custom named environment `@plotting` without specifying the `silent` flag. If a local `Project.toml` or `Manifest.toml` exists in the script's directory, `QuickEnv` will alert you with a warning that the local directory configuration is being ignored in favor of the shared named environment:
+
+```julia
+#!/usr/bin/env julia
+using QuickEnv # fallback: plotting, exclude: global
+
+using Plots
+
+function (@main)(args)
+    println("Running script in named environment @plotting...")
+    return 0
+end
+```
+
+*Output (if local `Project.toml` exists in the script directory)*:
+```log
+┌ Warning: QuickEnv: Local Project.toml or Manifest.toml exists in the script's directory, but is being ignored because named environment @plotting is activated.
+└ @ QuickEnv ~/.julia/packages/QuickEnv/.../QuickEnv.jl
+Running script in named environment @plotting...
+```
+
 ---
 
 ## ⚙️ Technical architecture and specifications
