@@ -162,6 +162,112 @@ function __init__()
     handle_matching_or_fallback(required_packages, fallback_env, excluded_envs, is_silent, script_path)
 end
 
+function parse_inline_options(line::String)
+    fallback_env = ""
+    excluded_envs = String[]
+    is_silent = false
+    create_env = ""
+    
+    parts = split(line, '#')
+    if length(parts) > 1
+        comment_part = strip(parts[2])
+        clean_line = strip(parts[1])
+        if occursin(r"\bQuickEnv\b", clean_line)
+            # 1. Parse inline silent/quiet flags
+            if occursin(r"(?i)\bsilent\b", comment_part) || occursin(r"(?i)\bquiet\b", comment_part)
+                is_silent = true
+            end
+            
+            # 2. Parse inline fallback: <name>
+            m_inline_fallback = match(r"(?i)\bfallback\s*:\s*([a-zA-Z0-9_\-]+)", comment_part)
+            if m_inline_fallback !== nothing
+                fallback_env = String(m_inline_fallback.captures[1])
+            end
+            
+            # 3. Parse inline create: <name>
+            m_inline_create = match(r"(?i)\bcreate\s*:\s*([a-zA-Z0-9_\-]+)", comment_part)
+            if m_inline_create !== nothing
+                create_env = String(m_inline_create.captures[1])
+            end
+            
+            # 4. Parse inline exclude: <comma-separated list>
+            m_inline_exclude = match(r"(?i)\bexclude\s*:\s*([^#;]+)", comment_part)
+            if m_inline_exclude !== nothing
+                raw_excl = m_inline_exclude.captures[1]
+                # Remove other keywords to avoid capturing them if they appear after 'exclude:'
+                raw_excl = replace(raw_excl, r"(?i)\bfallback\s*:\s*[a-zA-Z0-9_\-]+" => "")
+                raw_excl = replace(raw_excl, r"(?i)\bcreate\s*:\s*[a-zA-Z0-9_\-]+" => "")
+                raw_excl = replace(raw_excl, r"(?i)\bsilent\b" => "")
+                raw_excl = replace(raw_excl, r"(?i)\bquiet\b" => "")
+                
+                for item in split(raw_excl, ',')
+                    clean_item = strip(item)
+                    if !isempty(clean_item)
+                        push!(excluded_envs, String(clean_item))
+                    end
+                end
+            end
+        end
+    end
+    return fallback_env, excluded_envs, is_silent, create_env
+end
+
+function parse_standalone_comments(line::String)
+    fallback_env = ""
+    excluded_envs = String[]
+    is_silent = nothing
+    create_env = ""
+
+    # 1. Parse standalone fallback magic comment
+    m_fallback = match(r"^\s*#\s*quickenv_fallback\s*:\s*([a-zA-Z0-9_\-]+)", line)
+    if m_fallback !== nothing
+        fallback_env = String(m_fallback.captures[1])
+    end
+
+    # 2. Parse standalone exclude magic comment (comma-separated list of env names or "global")
+    m_exclude = match(r"^\s*#\s*quickenv_exclude\s*:\s*(.*)$", line)
+    if m_exclude !== nothing
+        for item in split(m_exclude.captures[1], ',')
+            push!(excluded_envs, String(strip(item)))
+        end
+    end
+
+    # 3. Parse standalone QuickEnv.create magic comment
+    m_create = match(r"^\s*#\s*(?:QuickEnv\.create|quickenv_create)\s*:\s*([a-zA-Z0-9_\-]+)", line)
+    if m_create !== nothing
+        create_env = String(m_create.captures[1])
+    end
+
+    # 4. Parse standalone silent magic comment (e.g., # quickenv_silent: true)
+    m_silent = match(r"^\s*#\s*quickenv_silent\s*:\s*([a-zA-Z0-9_\-]+)", line)
+    if m_silent !== nothing
+        is_silent = lowercase(strip(m_silent.captures[1])) == "true"
+    end
+
+    return fallback_env, excluded_envs, is_silent, create_env
+end
+
+function extract_packages_from_line(line::String)
+    packages = String[]
+    clean_line = strip(first(split(line, '#')))
+    m = match(r"^\s*(using|import)\s+(.*)$", clean_line)
+    if m !== nothing
+        raw_imports = m.captures[2]
+        # In Julia, standard 'using/import Module: item' syntax imports items from a module.
+        # The module/package name always appears before the colon.
+        pkg_part = first(split(raw_imports, ':'))
+        parts = split(pkg_part, ',')
+        for part in parts
+            pkg = strip(part)
+            if !isempty(pkg) && isuppercase(first(pkg))
+                pkg_name = first(split(pkg))
+                push!(packages, String(pkg_name))
+            end
+        end
+    end
+    return packages
+end
+
 """
     parse_script_metadata(script_path::String)
 
@@ -176,93 +282,40 @@ function parse_script_metadata(script_path::String)
     
     if isfile(script_path)
         for line in eachline(script_path)
-            # Check for inline options on the QuickEnv import line
-            # e.g., using QuickEnv # fallback: plotting, exclude: global, silent, create: data
-            parts = split(line, '#')
-            if length(parts) > 1
-                comment_part = strip(parts[2])
-                clean_line = strip(parts[1])
-                if occursin(r"\bQuickEnv\b", clean_line)
-                    # 1. Parse inline silent/quiet flags
-                    if occursin(r"(?i)\bsilent\b", comment_part) || occursin(r"(?i)\bquiet\b", comment_part)
-                        is_silent = true
-                    end
-                    
-                    # 2. Parse inline fallback: <name>
-                    m_inline_fallback = match(r"(?i)\bfallback\s*:\s*([a-zA-Z0-9_\-]+)", comment_part)
-                    if m_inline_fallback !== nothing
-                        fallback_env = String(m_inline_fallback.captures[1])
-                    end
-                    
-                    # 3. Parse inline create: <name>
-                    m_inline_create = match(r"(?i)\bcreate\s*:\s*([a-zA-Z0-9_\-]+)", comment_part)
-                    if m_inline_create !== nothing
-                        create_env = String(m_inline_create.captures[1])
-                    end
-                    
-                    # 4. Parse inline exclude: <comma-separated list>
-                    m_inline_exclude = match(r"(?i)\bexclude\s*:\s*([^#;]+)", comment_part)
-                    if m_inline_exclude !== nothing
-                        raw_excl = m_inline_exclude.captures[1]
-                        # Remove other keywords to avoid capturing them if they appear after 'exclude:'
-                        raw_excl = replace(raw_excl, r"(?i)\bfallback\s*:\s*[a-zA-Z0-9_\-]+" => "")
-                        raw_excl = replace(raw_excl, r"(?i)\bcreate\s*:\s*[a-zA-Z0-9_\-]+" => "")
-                        raw_excl = replace(raw_excl, r"(?i)\bsilent\b" => "")
-                        raw_excl = replace(raw_excl, r"(?i)\bquiet\b" => "")
-                        
-                        for item in split(raw_excl, ',')
-                            clean_item = strip(item)
-                            if !isempty(clean_item)
-                                push!(excluded_envs, String(clean_item))
-                            end
-                        end
-                    end
-                end
+            # 1. Parse inline options on the QuickEnv import line
+            inline_fallback, inline_excl, inline_silent, inline_create = parse_inline_options(line)
+            if !isempty(inline_fallback)
+                fallback_env = inline_fallback
+            end
+            if !isempty(inline_excl)
+                append!(excluded_envs, inline_excl)
+            end
+            if inline_silent
+                is_silent = true
+            end
+            if !isempty(inline_create)
+                create_env = inline_create
             end
 
-            # 1. Parse standalone fallback magic comment
-            m_fallback = match(r"^\s*#\s*quickenv_fallback\s*:\s*([a-zA-Z0-9_\-]+)", line)
-            if m_fallback !== nothing
-                fallback_env = String(m_fallback.captures[1])
+            # 2. Parse standalone magic comments
+            sa_fallback, sa_excl, sa_silent, sa_create = parse_standalone_comments(line)
+            if !isempty(sa_fallback)
+                fallback_env = sa_fallback
+            end
+            if !isempty(sa_excl)
+                append!(excluded_envs, sa_excl)
+            end
+            if sa_silent !== nothing
+                is_silent = sa_silent
+            end
+            if !isempty(sa_create)
+                create_env = sa_create
             end
 
-            # 2. Parse standalone exclude magic comment (comma-separated list of env names or "global")
-            m_exclude = match(r"^\s*#\s*quickenv_exclude\s*:\s*(.*)$", line)
-            if m_exclude !== nothing
-                for item in split(m_exclude.captures[1], ',')
-                    push!(excluded_envs, strip(item))
-                end
-            end
-
-            # 3. Parse standalone QuickEnv.create magic comment
-            m_create = match(r"^\s*#\s*(?:QuickEnv\.create|quickenv_create)\s*:\s*([a-zA-Z0-9_\-]+)", line)
-            if m_create !== nothing
-                create_env = String(m_create.captures[1])
-            end
-
-            # 4. Parse standalone silent magic comment (e.g., # quickenv_silent: true)
-            m_silent = match(r"^\s*#\s*quickenv_silent\s*:\s*([a-zA-Z0-9_\-]+)", line)
-            if m_silent !== nothing
-                is_silent = lowercase(strip(m_silent.captures[1])) == "true"
-            end
-
-            # 5. Extract package imports
-            clean_line = strip(first(split(line, '#')))
-            m = match(r"^\s*(using|import)\s+(.*)$", clean_line)
-            if m !== nothing
-                raw_imports = m.captures[2]
-                # In Julia, standard 'using/import Module: item' syntax imports items from a module.
-                # The module/package name always appears before the colon.
-                pkg_part = first(split(raw_imports, ':'))
-                parts = split(pkg_part, ',')
-                for part in parts
-                    pkg = strip(part)
-                    if !isempty(pkg) && isuppercase(first(pkg))
-                        pkg_name = first(split(pkg))
-                        if !(pkg_name in packages)
-                            push!(packages, String(pkg_name))
-                        end
-                    end
+            # 3. Extract package imports
+            for pkg in extract_packages_from_line(line)
+                if !(pkg in packages)
+                    push!(packages, pkg)
                 end
             end
         end
