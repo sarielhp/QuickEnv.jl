@@ -1,4 +1,4 @@
-#! /bin/env julial
+#!/usr/bin/env julia
 using QuickEnv # create: science, silent
 
 using Plots

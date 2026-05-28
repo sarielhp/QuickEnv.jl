@@ -6,7 +6,7 @@ using Test
     @testset "Script Metadata Parsing" begin
         # Write a mock Julia script with magic comments (inline)
         mock_script_content = """
-        #! /bin/env julial
+        #!/usr/bin/env julia
         
         using QuickEnv # fallback: plotting_test, exclude: global, outdated_plotting, broken_env, silent, create: data_test
         using Plots
@@ -55,7 +55,7 @@ using Test
 
         # Test Standalone QuickEnv.create parsing
         mock_script_standalone = """
-        #! /bin/env julial
+        #!/usr/bin/env julia
         # QuickEnv.create: data_test_standalone
         using QuickEnv
         """

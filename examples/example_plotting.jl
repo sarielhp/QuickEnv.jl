@@ -1,4 +1,4 @@
-#! /bin/env julial
+#!/usr/bin/env julia
 using QuickEnv # fallback: plotting, exclude: global, silent
 using Plots
 using Cairo

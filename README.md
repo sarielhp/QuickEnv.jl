@@ -99,7 +99,7 @@ Forces `QuickEnv` to use and manage a specific named environment.
 This script prevents itself from running in the global environment, sets `@plotting` as the fallback environment, and executes completely silently:
 
 ```julia
-#! /bin/env julial
+#!/usr/bin/env julia
 using QuickEnv # fallback: plotting, exclude: global, silent
 
 using Plots
@@ -118,7 +118,7 @@ end
 This script requests a dedicated named environment `@data`. If no environment currently contains both `DataFrames` and `CSV`, it will automatically create `@data`, download/compile the packages, and run completely silently:
 
 ```julia
-#! /bin/env julial
+#!/usr/bin/env julia
 using QuickEnv # fallback: data, exclude: global, silent
 
 using DataFrames
