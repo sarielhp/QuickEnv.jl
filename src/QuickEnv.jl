@@ -3,6 +3,12 @@ module QuickEnv
 using Pkg
 using TOML
 
+"""
+    get_script_path() -> String
+
+Retrieve the absolute path to the currently executing Julia script. Returns an empty string
+if Julia is running interactively (e.g., in the REPL or over a socket connection).
+"""
 function get_script_path()
     script_path = PROGRAM_FILE
     if isempty(script_path)
@@ -12,6 +18,15 @@ function get_script_path()
     return isempty(script_path) ? "" : abspath(script_path)
 end
 
+"""
+    handle_forced_creation(create_env, required_packages, is_silent) -> Bool
+
+Handle the forced environment creation or update logic triggered by `create: <env>` magic comments.
+If `create_env` is non-empty, checks if the shared named environment already exists and satisfies all
+required imports. If not, it activates the environment, displays a detailed update description,
+disables silent mode, and installs all missing package dependencies. Returns `true` if a forced
+environment was handled, allowing `__init__` to return early.
+"""
 function handle_forced_creation(create_env::String, required_packages::Vector{String}, is_silent::Bool)
     isempty(create_env) && return false
 
@@ -66,6 +81,15 @@ function handle_forced_creation(create_env::String, required_packages::Vector{St
     return true
 end
 
+"""
+    handle_matching_or_fallback(required_packages, fallback_env, excluded_envs, is_silent, script_path)
+
+Find and activate a satisfying global shared named environment, or execute fallback/auto-bootstrapping
+logic. If multiple environments match, the first non-versioned custom named environment is preferred.
+If no matching environment is found, it falls back to creating/updating the requested fallback
+environment or activates the local directory project of the script and installs any missing packages.
+Includes a safety check to prevent package installation directly into standard versioned global scopes.
+"""
 function handle_matching_or_fallback(required_packages::Vector{String}, fallback_env::String, excluded_envs::Vector{String}, is_silent::Bool, script_path::String)
     # Locate all satisfying named environments
     matching = find_matching_envs(required_packages)
@@ -140,6 +164,12 @@ function handle_matching_or_fallback(required_packages::Vector{String}, fallback
     end
 end
 
+"""
+    __init__()
+
+Initialization hook executed automatically when `QuickEnv` is imported. Orchestrates script path
+resolution, metadata parsing, silent-mode configuration, and environment selection or fallback.
+"""
 function __init__()
     script_path = get_script_path()
     isempty(script_path) && return
@@ -162,6 +192,12 @@ function __init__()
     handle_matching_or_fallback(required_packages, fallback_env, excluded_envs, is_silent, script_path)
 end
 
+"""
+    parse_inline_options(line::String) -> Tuple{String, Vector{String}, Bool, String}
+
+Parse inline configuration comments on the `using QuickEnv` import line.
+Extracts fallback targets, exclusion lists, silent execution flag, and forced creation targets.
+"""
 function parse_inline_options(line::String)
     fallback_env = ""
     excluded_envs = String[]
@@ -212,6 +248,12 @@ function parse_inline_options(line::String)
     return fallback_env, excluded_envs, is_silent, create_env
 end
 
+"""
+    parse_standalone_comments(line::String) -> Tuple{String, Vector{String}, Union{Nothing, Bool}, String}
+
+Parse standalone configuration comments starting with `# quickenv_` or `# QuickEnv.` on a single line.
+Extracts fallback targets, exclusion lists, silent execution flag, and forced creation targets.
+"""
 function parse_standalone_comments(line::String)
     fallback_env = ""
     excluded_envs = String[]
@@ -247,6 +289,12 @@ function parse_standalone_comments(line::String)
     return fallback_env, excluded_envs, is_silent, create_env
 end
 
+"""
+    extract_packages_from_line(line::String) -> Vector{String}
+
+Parse a code line containing a `using` or `import` statement, stripping inline comments and sub-imports
+following a colon (`:`), and return the list of imported Julia package names.
+"""
 function extract_packages_from_line(line::String)
     packages = String[]
     clean_line = strip(first(split(line, '#')))
@@ -323,6 +371,12 @@ function parse_script_metadata(script_path::String)
     return packages, fallback_env, excluded_envs, is_silent, create_env
 end
 
+"""
+    find_matching_envs(required_pkgs) -> Vector{String}
+
+Scan Julia's standard depot path (`DEPOT_PATH[1]/environments/`) to find all existing shared named
+environments that satisfy all of the required packages. Returns a sorted list of environment names.
+"""
 function find_matching_envs(required_pkgs::Vector{String})
     env_dir = joinpath(DEPOT_PATH[1], "environments")
     !isdir(env_dir) && return String[]
@@ -349,9 +403,12 @@ function find_matching_envs(required_pkgs::Vector{String})
 end
 
 """
-    filter_matching_envs(matching::Vector{String}, fallback_env::String, excluded_envs::Vector{String})
+    filter_matching_envs(matching, fallback_env, excluded_envs) -> Vector{String}
 
-Filters a list of matching environments based on forbidden exclusion lists and fallback rules.
+Filter the matched environments list based on exclusion rules and fallback preferences:
+- Excludes standard global environments (e.g., `@v1.12`) if the `"global"` keyword is in `excluded_envs`.
+- Excludes any environments explicitly named in `excluded_envs`.
+- Excludes standard global environments if a specific `fallback_env` has been requested, ensuring the fallback is created/used instead.
 """
 function filter_matching_envs(matching::Vector{String}, fallback_env::String, excluded_envs::Vector{String})
     return filter(matching) do env
