@@ -99,8 +99,14 @@ using Plots
 ## 🧠 Understanding shared named environments
 
 A **Shared Named Environment** in Julia (such as say `@plotting` or
-say `@data`) is a globally accessible, isolated package environment stored
-in your home directory under `~/.julia/environments/`.
+say `@data` [these do not exist by default - you have to create them]) is a globally
+accessible, isolated package environment stored in your home directory
+under `~/.julia/environments/`.
+
+### Are there default named environments in Julia?
+No. Out of the box, Julia does not ship with any pre-made named environments (like `@plotting` or `@data`). Those are completely custom namespaces.
+
+The only built-in shared environment provided by Julia is the standard versioned global environment (e.g., `@v1.12` or `@v1.10`), which is activated by default when starting Julia without a project directory. Any other named environment must be created by you (or automatically bootstrapped by `QuickEnv.jl` on demand).
 
 To understand why they are highly useful, it is helpful to compare the
 three package management paradigms in Julia:
