@@ -3,6 +3,20 @@ module QuickEnv
 using Pkg
 using TOML
 
+const tip_printed = Ref(false)
+
+"""
+    print_silence_tip(is_silent)
+
+Print instructions on how to make QuickEnv silent if logs are printed, ensuring it is shown at most once.
+"""
+function print_silence_tip(is_silent::Bool)
+    if !is_silent && !tip_printed[]
+        @info "QuickEnv: Tip: To run silently, add '# silent' to 'using QuickEnv', set '# quickenv_silent: true', or set QUICKENV_SILENT=true."
+        tip_printed[] = true
+    end
+end
+
 """
     get_script_path() -> String
 
@@ -56,7 +70,7 @@ function handle_forced_creation(create_env::String, required_packages::Vector{St
         if current_project === nothing || !occursin(create_env, current_project)
             if !is_silent
                 @info "QuickEnv: Found existing environment @$create_env with all dependencies. Activating..."
-                @info "QuickEnv: Tip: To run silently, add '# silent' to 'using QuickEnv', set '# quickenv_silent: true', or set QUICKENV_SILENT=true."
+                print_silence_tip(is_silent)
             end
             Pkg.activate(create_env, shared=true, io=is_silent ? devnull : stderr)
         end
@@ -108,7 +122,7 @@ function handle_matching_or_fallback(required_packages::Vector{String}, fallback
         if current_project === nothing || !occursin(env_name, current_project)
             if !is_silent
                 @info "QuickEnv: Found matching environment @$env_name. Activating..."
-                @info "QuickEnv: Tip: To run silently, add '# silent' to 'using QuickEnv', set '# quickenv_silent: true', or set QUICKENV_SILENT=true."
+                print_silence_tip(is_silent)
             end
             Pkg.activate(env_name, shared=true, io=is_silent ? devnull : stderr)
         end
@@ -167,7 +181,7 @@ function handle_matching_or_fallback(required_packages::Vector{String}, fallback
             else
                 # No new packages were added! If we printed any activation logs, show the silent tip.
                 if printed_info && !is_silent
-                    @info "QuickEnv: Tip: To run silently, add '# silent' to 'using QuickEnv', set '# quickenv_silent: true', or set QUICKENV_SILENT=true."
+                    print_silence_tip(is_silent)
                 end
             end
         end
