@@ -20,20 +20,28 @@ this problem by automatically creating a local environment, installing
 missing packages, and running the program in this environment. 
 
 ### The default behavior: Zero configuration 
-It automatically activates the script's local directory and installs all missing packages to the local environment (i.e., bootstrapping missing packages), and then goes on to run the program:
+Add QuickEnv as the first package used by your program. When the Julia
+program executes it automatically activates the script's local
+directory and installs all missing packages to the local environment
+(i.e., bootstrapping missing packages), and then goes on to run the
+program:
 
 ```julia
 #!/usr/bin/env julia
 using QuickEnv
 using Plots
+
+# the rest of the program ...
+
 ```
 
 Now, just run it! Everything would just work (after installing
 QuickEnv in your global environment one time [sorry]). QuickEnv would
 take care of making things work by installing the missing packages in
-the local environment, etc. 
+the local environment, etc. Running the program for the second time
+once the environment is setup, is well, quick.
 
-There is an important exception to the above behavior: If QuickEnv finds any existing [named environment](#-understanding-shared-named-environments) satisfying your imports (e.g. `@plotting`), it uses it instead. That creates a convenient way to have several default environments that fit most Julia programs.
+There is an important exception to the above behavior: If QuickEnv finds any existing [named environment](#-understanding-shared-named-environments) satisfying your imports (e.g. `@plotting`), it uses it instead. That creates a convenient way to have several default environments that would fit many Julia programs.
 
 
 
