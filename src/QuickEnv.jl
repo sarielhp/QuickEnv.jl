@@ -13,9 +13,7 @@ ensuring it is shown at most once.
 """
 function print_silence_tip(is_silent::Bool)
     if !is_silent && !tip_printed[]
-        @info "QuickEnv: Tip: To run silently, add '# silent' to " *
-            "'using QuickEnv', set '# quickenv_silent: true', " *
-            "or set QUICKENV_SILENT=true."
+        @info "QuickEnv tip... To silence this msg add magic comment: 'using QuickEnv  # silent'"
         tip_printed[] = true
     end
 end
