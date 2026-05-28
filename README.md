@@ -30,7 +30,7 @@ When you place `using QuickEnv` at the top of a script, it scans your code impor
 Get started by simply placing `using QuickEnv` at the top of your scripts. You can run in zero-configuration mode, force a specific [named environment](#-understanding-shared-named-environments) to be created and managed, or specify a [named environment](#-understanding-shared-named-environments) fallback.
 
 ### 1. Zero-Configuration (No Magic Comments)
-Matches any existing [named environment](#-understanding-shared-named-environments) satisfying your imports (e.g. `@plotting`). If none is found, it automatically activates the script's local directory and bootstraps missing packages:
+Matches any existing [named environment](#-understanding-shared-named-environments) satisfying your imports (e.g. `@plotting`). If none is found, it automatically activates the script's local directory and install all missing packages to the local environment (i.e., bootstrapping missing packages), and then goes on to run the program:
 
 ```julia
 #!/usr/bin/env julia
