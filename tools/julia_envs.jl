@@ -457,36 +457,157 @@ function search_packages(query::String)
     end
 end
 
-# Display usage instructions
+# Display dedicated detailed usage and examples for a specific command
+function print_command_help(cmd::AbstractString)
+    cmd_clean = lowercase(strip(cmd))
+    if cmd_clean == "list"
+        println("""
+        $(bold(cyan("Command:"))) list
+        $(bold(yellow("Description:"))) List all named environments and their custom descriptions.
+
+        $(bold(yellow("Usage:")))
+          julia_envs list
+
+        $(bold(yellow("Example:")))
+          julia_envs list
+        """)
+    elseif cmd_clean == "show"
+        println("""
+        $(bold(cyan("Command:"))) show
+        $(bold(yellow("Description:"))) Show registered packages (direct dependencies) in a named environment.
+
+        $(bold(yellow("Usage:")))
+          julia_envs show <env_name>
+
+        $(bold(yellow("Example:")))
+          julia_envs show @plotting
+        """)
+    elseif cmd_clean == "add"
+        println("""
+        $(bold(cyan("Command:"))) add
+        $(bold(yellow("Description:"))) Add one or more package dependencies to a named environment.
+
+        $(bold(yellow("Usage:")))
+          julia_envs add <env_name> <pkg1> [pkg2 ...]
+
+        $(bold(yellow("Example:")))
+          julia_envs add @plotting DataStructures DataFrames
+        """)
+    elseif cmd_clean == "describe"
+        println("""
+        $(bold(cyan("Command:"))) describe
+        $(bold(yellow("Description:"))) Add or update a custom description for a named environment.
+
+        $(bold(yellow("Usage:")))
+          julia_envs describe <env_name> "<description>"
+
+        $(bold(yellow("Example:")))
+          julia_envs describe @plotting "Plotting environment with Plots.jl and Cairo"
+        """)
+    elseif cmd_clean == "create"
+        println("""
+        $(bold(cyan("Command:"))) create
+        $(bold(yellow("Description:"))) Scan a Julia script for imported packages, create a new named environment, and automatically add all dependencies.
+
+        $(bold(yellow("Usage:")))
+          julia_envs create <env_name> <script.jl>
+
+        $(bold(yellow("Example:")))
+          julia_envs create @math_env solve_inequality.jl
+        """)
+    elseif cmd_clean == "match"
+        println("""
+        $(bold(cyan("Command:"))) match
+        $(bold(yellow("Description:"))) Find all existing named environments that satisfy all package imports in a Julia script.
+
+        $(bold(yellow("Usage:")))
+          julia_envs match <script.jl>
+
+        $(bold(yellow("Example:")))
+          julia_envs match plot_inequality.jl
+        """)
+    elseif cmd_clean == "mrun"
+        println("""
+        $(bold(cyan("Command:"))) mrun
+        $(bold(yellow("Description:"))) Run a Julia script in a matching named environment (automatically selected).
+
+        $(bold(yellow("Usage:")))
+          julia_envs mrun <script.jl> [args...]
+
+        $(bold(yellow("Example:")))
+          julia_envs mrun plot_inequality.jl
+        """)
+    elseif cmd_clean == "run"
+        println("""
+        $(bold(cyan("Command:"))) run
+        $(bold(yellow("Description:"))) Run a Julia script inside a specified named environment.
+
+        $(bold(yellow("Usage:")))
+          julia_envs run <env_name> <script.jl> [args...]
+
+        $(bold(yellow("Example:")))
+          julia_envs run @plotting plot_inequality.jl
+        """)
+    elseif cmd_clean == "repl"
+        println("""
+        $(bold(cyan("Command:"))) repl
+        $(bold(yellow("Description:"))) Launch Julia REPL inside a specified named environment.
+
+        $(bold(yellow("Usage:")))
+          julia_envs repl <env_name>
+
+        $(bold(yellow("Example:")))
+          julia_envs repl @plotting
+        """)
+    elseif cmd_clean in ("rm", "delete")
+        println("""
+        $(bold(cyan("Command:"))) rm
+        $(bold(yellow("Description:"))) Delete a specified named environment.
+
+        $(bold(yellow("Usage:")))
+          julia_envs rm <env_name>
+
+        $(bold(yellow("Example:")))
+          julia_envs rm @test_env
+        """)
+    elseif cmd_clean == "search"
+        println("""
+        $(bold(cyan("Command:"))) search
+        $(bold(yellow("Description:"))) Search the official Julia General Registry for a package by query.
+
+        $(bold(yellow("Usage:")))
+          julia_envs search <query>
+
+        $(bold(yellow("Example:")))
+          julia_envs search DataStructures
+        """)
+    else
+        println(stderr, red("Error: Unknown command '$cmd'"))
+        print_help()
+    end
+end
+
+# Display global usage instructions
 function print_help()
     println("""
     $(bold(cyan("julia_envs"))) - Manage Julia Named Environments
 
-    $(bold(yellow("Usage:")))
-      julia_envs list                            List all environments and descriptions
-      julia_envs show <env_name>                 Show registered packages in an environment
-      julia_envs add <env_name> <pkg1> <pkg2>..  Add packages to a named environment
-      julia_envs describe <env_name> "<desc>"    Add/change description of an environment
-      julia_envs create <env_name> <script.jl>   Create an environment from a Julia script
-      julia_envs match <script.jl>               Find environments that can run a script
-      julia_envs mrun <script.jl> [args...]      Run a Julia script in a matching named env
-      julia_envs run <env_name> <script.jl> [..] Run a Julia script in a named environment
-      julia_envs repl <env_name>                 Launch Julia REPL in a named environment
-      julia_envs rm <env_name>                   Delete a named environment
-      julia_envs search <query>                  Search General Registry for a package
+    $(bold(yellow("Usage:"))) julia_envs <command> [arguments...]
 
-    $(bold(yellow("Examples:")))
-      julia_envs list
-      julia_envs show @plotting
-      julia_envs add @plotting DataStructures DataFrames
-      julia_envs describe @plotting "Plotting environment with Plots.jl and Cairo"
-      julia_envs create @math_env solve_inequality.jl
-      julia_envs match plot_inequality.jl
-      julia_envs mrun plot_inequality.jl
-      julia_envs run @plotting plot_inequality.jl
-      julia_envs repl @plotting
-      julia_envs rm @test_env
-      julia_envs search DataStructures
+    $(bold(yellow("Commands:")))
+      list                            List all environments and descriptions
+      show <env_name>                 Show registered packages in an environment
+      add <env_name> <pkg1> <pkg2>..  Add packages to a named environment
+      describe <env_name> "<desc>"    Add/change description of an environment
+      create <env_name> <script.jl>   Create an environment from a Julia script
+      match <script.jl>               Find environments that can run a script
+      mrun <script.jl> [args...]      Run a Julia script in a matching named env
+      run <env_name> <script.jl> [..] Run a Julia script in a named environment
+      repl <env_name>                 Launch Julia REPL in a named environment
+      rm <env_name>                   Delete a named environment
+      search <query>                  Search General Registry for a package
+
+    $(bold(gray("Tip: Run 'julia_envs help <command>' or call a command without arguments to view its detailed usage and examples.")))
     """)
 end
 
@@ -504,65 +625,72 @@ function (@main)(args)
         list_environments()
     elseif action == "show"
         if isempty(action_args)
-            println(stderr, red("Error: Please specify an environment name."))
+            print_command_help("show")
         else
             show_environment(action_args[1])
         end
     elseif action == "add"
         if isempty(action_args)
-            println(stderr, red("Error: Please specify an environment name."))
+            print_command_help("add")
         else
             add_packages(action_args[1], action_args[2:end])
         end
     elseif action == "describe"
         if length(action_args) < 2
-            println(stderr, red("Error: Usage: julia_envs describe <env_name> \"<description>\""))
+            print_command_help("describe")
         else
             describe_environment(action_args[1], action_args[2])
         end
     elseif action == "create"
         if length(action_args) < 2
-            println(stderr, red("Error: Usage: julia_envs create <env_name> <script.jl>"))
+            print_command_help("create")
         else
             create_from_script(action_args[1], action_args[2])
         end
     elseif action == "match"
         if isempty(action_args)
-            println(stderr, red("Error: Usage: julia_envs match <script.jl>"))
+            print_command_help("match")
         else
             find_matching_environments(action_args[1])
         end
     elseif action == "mrun"
         if isempty(action_args)
-            println(stderr, red("Error: Usage: julia_envs mrun <script.jl> [args...]"))
+            print_command_help("mrun")
         else
             match_and_run(action_args[1], action_args[2:end])
         end
     elseif action == "run"
         if length(action_args) < 2
-            println(stderr, red("Error: Usage: julia_envs run <env_name> <script.jl> [args...]"))
+            print_command_help("run")
         else
             run_script(action_args[1], action_args[2], action_args[3:end])
         end
     elseif action == "repl"
         if isempty(action_args)
-            println(stderr, red("Error: Usage: julia_envs repl <env_name>"))
+            print_command_help("repl")
         else
             launch_repl(action_args[1])
         end
     elseif action in ("rm", "delete")
         if isempty(action_args)
-            println(stderr, red("Error: Usage: julia_envs rm <env_name>"))
+            print_command_help("rm")
         else
             remove_environment(action_args[1])
         end
     elseif action == "search"
         if isempty(action_args)
-            println(stderr, red("Error: Usage: julia_envs search <query>"))
+            print_command_help("search")
         else
             search_packages(action_args[1])
         end
+    elseif action in ("help", "--help", "-h")
+        if isempty(action_args)
+            print_help()
+        else
+            print_command_help(action_args[1])
+        end
     else
+        println(stderr, red("Error: Unknown command '$action'"))
         print_help()
     end
 
