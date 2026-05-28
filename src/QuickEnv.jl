@@ -321,9 +321,11 @@ function warn_ignored_local_files(script_path::String, env_name::String, is_sile
     local_project = joinpath(script_dir, "Project.toml")
     local_manifest = joinpath(script_dir, "Manifest.toml")
     if isfile(local_project) || isfile(local_manifest)
-        @warn "QuickEnv: Local Project.toml or Manifest.toml exists in the " *
-              "script's directory, but is being ignored because named " *
+        println(stderr)
+        @warn "QuickEnv: Local Project.toml or Manifest.toml exists in the\n" *
+              "script's directory, but is being ignored because named\n" *
               "environment @$env_name is activated."
+        println(stderr)
         print_silence_tip(is_silent)
     end
     return nothing
