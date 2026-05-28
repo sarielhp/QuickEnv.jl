@@ -7,7 +7,7 @@ using Test
         mock_script_content = """
         #!/usr/bin/env julia
 
-        using QuickEnv # fallback: plotting_test, exclude: global, outdated_plotting, broken_env, silent, create: data_test
+        using QuickEnv # fallback: plotting_test, exclude: global, outdated_plotting, broken_env, silent, create: data_test, description: "Inline test description"
         using Plots
         import DataFrames: DataFrame
 
@@ -23,7 +23,7 @@ using Test
             close(io)
 
             # Parse the metadata
-            pkgs, fallback, excluded, is_silent, create_env = QuickEnv.parse_script_metadata(
+            pkgs, fallback, excluded, is_silent, create_env, description = QuickEnv.parse_script_metadata(
                 tmp_path
             )
 
@@ -49,6 +49,9 @@ using Test
 
             # Verify create extraction from inline comment
             @test create_env == "data_test"
+
+            # Verify description extraction from inline comment
+            @test description == "Inline test description"
         finally
             # Clean up the temp file
             rm(tmp_path)
@@ -65,10 +68,46 @@ using Test
             write(io_s, mock_script_standalone)
             close(io_s)
 
-            _, _, _, _, create_env_s = QuickEnv.parse_script_metadata(tmp_path_s)
+            _, _, _, _, create_env_s, _ = QuickEnv.parse_script_metadata(tmp_path_s)
             @test create_env_s == "data_test_standalone"
         finally
             rm(tmp_path_s)
+        end
+
+        # Test Standalone QuickEnv.description parsing
+        mock_script_standalone_desc = """
+        #!/usr/bin/env julia
+        # QuickEnv.description: Standalone test description
+        using QuickEnv
+        """
+        tmp_path_d, io_d = mktemp()
+        try
+            write(io_d, mock_script_standalone_desc)
+            close(io_d)
+
+            _, _, _, _, _, description_d = QuickEnv.parse_script_metadata(tmp_path_d)
+            @test description_d == "Standalone test description"
+        finally
+            rm(tmp_path_d)
+        end
+    end
+
+    @testset "Project.toml Description Write" begin
+        tmp_toml, io_t = mktemp()
+        try
+            close(io_t)
+            # Write description
+            QuickEnv.update_description(tmp_toml, "Initial Description")
+            content = read(tmp_toml, String)
+            @test occursin("description = \"Initial Description\"", content)
+
+            # Update description
+            QuickEnv.update_description(tmp_toml, "Updated Description")
+            content = read(tmp_toml, String)
+            @test occursin("description = \"Updated Description\"", content)
+            @test !occursin("description = \"Initial Description\"", content)
+        finally
+            rm(tmp_toml)
         end
     end
 

@@ -263,6 +263,53 @@ function handle_matching_or_fallback(
 end
 
 """
+    update_description(file_path::String, new_desc::String)
+
+Update or insert the description key in a Project.toml file.
+"""
+function update_description(file_path::String, new_desc::String)
+    mkpath(dirname(file_path))
+    lines = isfile(file_path) ? readlines(file_path, keep=true) : String[]
+    description_replaced = false
+
+    updated_lines = String[]
+    for line in lines
+        if occursin(r"^\s*description\s*=\s*\".*\"\s*$", line)
+            description_replaced = true
+            push!(updated_lines, "description = \"$new_desc\"\n")
+        else
+            push!(updated_lines, line)
+        end
+    end
+
+    if !description_replaced
+        pushfirst!(updated_lines, "description = \"$new_desc\"\n\n")
+    end
+
+    write(file_path, join(updated_lines))
+end
+
+"""
+    update_active_env_description(description::String)
+
+Update the description in the Project.toml of the active environment,
+excluding standard versioned global environments to prevent pollution.
+"""
+function update_active_env_description(description::String)
+    if isempty(description)
+        return nothing
+    end
+    project_file = Base.active_project()
+    if project_file !== nothing && isfile(project_file)
+        env_name = basename(dirname(project_file))
+        if !occursin(r"^v\d+\.\d+$", env_name)
+            update_description(project_file, description)
+        end
+    end
+    return nothing
+end
+
+"""
     __init__()
 
 Initialization hook executed automatically when `QuickEnv` is imported.
@@ -275,7 +322,7 @@ function __init__()
         return nothing
     end
 
-    required_packages, fallback_env, excluded_envs, script_silent, create_env = parse_script_metadata(
+    required_packages, fallback_env, excluded_envs, script_silent, create_env, description = parse_script_metadata(
         script_path
     )
 
@@ -289,6 +336,7 @@ function __init__()
 
     # Handle forced environment creation or updating
     if handle_forced_creation(create_env, required_packages, is_silent)
+        update_active_env_description(description)
         return nothing
     end
 
@@ -296,32 +344,36 @@ function __init__()
     handle_matching_or_fallback(
         required_packages, fallback_env, excluded_envs, is_silent, script_path
     )
+
+    update_active_env_description(description)
+    return nothing
 end
 
 """
     parse_inline_options(
         line::String
-    ) -> Tuple{String, Vector{String}, Bool, String}
+    ) -> Tuple{String, Vector{String}, Bool, String, String}
 
 Parse inline configuration comments on the `using QuickEnv` import line.
-Extracts fallback targets, exclusion lists, silent execution flag, and
-forced creation targets.
+Extracts fallback targets, exclusion lists, silent execution flag, forced
+creation targets, and environment description.
 """
 function parse_inline_options(line::String)
     fallback_env = ""
     excluded_envs = String[]
     is_silent = false
     create_env = ""
+    description = ""
 
     parts = split(line, '#')
     if length(parts) <= 1
-        return fallback_env, excluded_envs, is_silent, create_env
+        return fallback_env, excluded_envs, is_silent, create_env, description
     end
 
     comment_part = strip(parts[2])
     clean_line = strip(parts[1])
     if !occursin(r"\bQuickEnv\b", clean_line)
-        return fallback_env, excluded_envs, is_silent, create_env
+        return fallback_env, excluded_envs, is_silent, create_env, description
     end
 
     # 1. Parse inline silent flags
@@ -341,7 +393,22 @@ function parse_inline_options(line::String)
         create_env = String(m_inline_create.captures[1])
     end
 
-    # 4. Parse inline exclude: <comma-separated list>
+    # 4. Parse inline description
+    m_inline_desc = match(r"(?i)\bdescription\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", comment_part)
+    if m_inline_desc !== nothing
+        raw_desc = nothing
+        for cap in m_inline_desc.captures
+            if cap !== nothing
+                raw_desc = cap
+                break
+            end
+        end
+        if raw_desc !== nothing
+            description = String(strip(raw_desc))
+        end
+    end
+
+    # 5. Parse inline exclude: <comma-separated list>
     m_inline_exclude = match(r"(?i)\bexclude\s*:\s*([^#;]+)", comment_part)
     if m_inline_exclude !== nothing
         raw_excl = m_inline_exclude.captures[1]
@@ -349,6 +416,7 @@ function parse_inline_options(line::String)
         # appear after 'exclude:'
         raw_excl = replace(raw_excl, r"(?i)\bfallback\s*:\s*[a-zA-Z0-9_\-]+" => "")
         raw_excl = replace(raw_excl, r"(?i)\bcreate\s*:\s*[a-zA-Z0-9_\-]+" => "")
+        raw_excl = replace(raw_excl, r"(?i)\bdescription\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))" => "")
         raw_excl = replace(raw_excl, r"(?i)\bsilent\b" => "")
 
         for item in split(raw_excl, ',')
@@ -358,23 +426,24 @@ function parse_inline_options(line::String)
             end
         end
     end
-    return fallback_env, excluded_envs, is_silent, create_env
+    return fallback_env, excluded_envs, is_silent, create_env, description
 end
 
 """
     parse_standalone_comments(
         line::String
-    ) -> Tuple{String, Vector{String}, Union{Nothing, Bool}, String}
+    ) -> Tuple{String, Vector{String}, Union{Nothing, Bool}, String, String}
 
 Parse standalone configuration comments starting with `# quickenv_` or
 `# QuickEnv.` on a single line. Extracts fallback targets, exclusion lists,
-silent execution flag, and forced creation targets.
+silent execution flag, forced creation targets, and environment description.
 """
 function parse_standalone_comments(line::String)
     fallback_env = ""
     excluded_envs = String[]
     is_silent = nothing
     create_env = ""
+    description = ""
 
     # 1. Parse standalone fallback magic comment
     m_fallback = match(r"^\s*#\s*quickenv_fallback\s*:\s*([a-zA-Z0-9_\-]+)", line)
@@ -399,13 +468,28 @@ function parse_standalone_comments(line::String)
         create_env = String(m_create.captures[1])
     end
 
-    # 4. Parse standalone silent magic comment (e.g., # quickenv_silent: true)
+    # 4. Parse standalone description magic comment
+    m_desc = match(r"^\s*#\s*(?:QuickEnv\.description|quickenv_description)\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|(.*))$", line)
+    if m_desc !== nothing
+        raw_desc = nothing
+        for cap in m_desc.captures
+            if cap !== nothing
+                raw_desc = cap
+                break
+            end
+        end
+        if raw_desc !== nothing
+            description = String(strip(raw_desc))
+        end
+    end
+
+    # 5. Parse standalone silent magic comment (e.g., # quickenv_silent: true)
     m_silent = match(r"^\s*#\s*quickenv_silent\s*:\s*([a-zA-Z0-9_\-]+)", line)
     if m_silent !== nothing
         is_silent = lowercase(strip(m_silent.captures[1])) == "true"
     end
 
-    return fallback_env, excluded_envs, is_silent, create_env
+    return fallback_env, excluded_envs, is_silent, create_env, description
 end
 
 """
@@ -442,8 +526,8 @@ end
 """
     parse_script_metadata(script_path::String)
 
-Reads a script and extracts required packages, fallback environments, and
-excluded environments.
+Reads a script and extracts required packages, fallback environments,
+excluded environments, silent flag, forced creation targets, and environment description.
 """
 function parse_script_metadata(script_path::String)
     packages = String[]
@@ -451,14 +535,15 @@ function parse_script_metadata(script_path::String)
     excluded_envs = String[]
     is_silent = false
     create_env = ""
+    description = ""
 
     if !isfile(script_path)
-        return packages, fallback_env, excluded_envs, is_silent, create_env
+        return packages, fallback_env, excluded_envs, is_silent, create_env, description
     end
 
     for line in eachline(script_path)
         # 1. Parse inline options on the QuickEnv import line
-        inline_fallback, inline_excl, inline_silent, inline_create = parse_inline_options(
+        inline_fallback, inline_excl, inline_silent, inline_create, inline_desc = parse_inline_options(
             line
         )
         if !isempty(inline_fallback)
@@ -473,9 +558,12 @@ function parse_script_metadata(script_path::String)
         if !isempty(inline_create)
             create_env = inline_create
         end
+        if !isempty(inline_desc)
+            description = inline_desc
+        end
 
         # 2. Parse standalone magic comments
-        sa_fallback, sa_excl, sa_silent, sa_create = parse_standalone_comments(line)
+        sa_fallback, sa_excl, sa_silent, sa_create, sa_desc = parse_standalone_comments(line)
         if !isempty(sa_fallback)
             fallback_env = sa_fallback
         end
@@ -488,6 +576,9 @@ function parse_script_metadata(script_path::String)
         if !isempty(sa_create)
             create_env = sa_create
         end
+        if !isempty(sa_desc)
+            description = sa_desc
+        end
 
         # 3. Extract package imports
         for pkg in extract_packages_from_line(line)
@@ -496,7 +587,7 @@ function parse_script_metadata(script_path::String)
             end
         end
     end
-    return packages, fallback_env, excluded_envs, is_silent, create_env
+    return packages, fallback_env, excluded_envs, is_silent, create_env, description
 end
 
 """

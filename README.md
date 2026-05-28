@@ -147,10 +147,10 @@ Pkg.add(url="https://github.com/yourusername/QuickEnv.jl.git")
 2. **Standalone Multiline Format**: Declared as separate comments at the top of the file.
 
 ### A. Compact inline format (recommended)
-You can declare fallback named environments, exclusions, silent flags, and forced environment creation all on the same line as your import:
+You can declare fallback named environments, exclusions, silent flags, forced environment creation, and descriptions all on the same line as your import:
 
 ```julia
-using QuickEnv # fallback: plotting, exclude: global, silent, create: data
+using QuickEnv # fallback: plotting, exclude: global, silent, create: data, description: "Data science environment with Plots.jl"
 ```
 
 ### B. Standalone multiline format
@@ -171,13 +171,19 @@ Forces `QuickEnv` to use and manage a specific named environment.
 ```
 *If `@plotting` does not exist or lacks the required packages, `QuickEnv` will create `@plotting` and run `Pkg.add` to resolve all missing dependencies automatically.*
 
-#### 3. Forbidden environments (`quickenv_exclude`)
+#### 3. Custom environment description (`QuickEnv.description`)
+Sets or updates the custom description for the activated environment's `Project.toml` (which will be displayed in `jlenv list`):
+```julia
+# QuickEnv.description: Custom environment with plotting packages and utility helpers
+```
+
+#### 4. Forbidden environments (`quickenv_exclude`)
 ```julia
 # quickenv_exclude: global, broken_plotting, experimental_ml
 ```
 *Note: The keyword `global` acts as a wildcard excluding standard versioned global environments (e.g., `@v1.12`).*
 
-#### 3. Silent execution (`quickenv_silent`)
+#### 5. Silent execution (`quickenv_silent`)
 ```julia
 # quickenv_silent: true
 ```
