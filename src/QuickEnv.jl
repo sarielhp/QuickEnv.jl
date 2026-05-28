@@ -21,7 +21,7 @@ function __init__()
     required_packages, fallback_env, excluded_envs, script_silent, create_env = parse_script_metadata(script_path)
     
     # Exclude QuickEnv itself from dependency matching
-    filter!(p -> p != "QuickEnv", required_packages)
+    filter!(p -> ( p != "QuickEnv" ), required_packages)
 
     # Resolve global silence (via QUICKENV_SILENT environment variable or script comment)
     env_silent = get(ENV, "QUICKENV_SILENT", "false")
