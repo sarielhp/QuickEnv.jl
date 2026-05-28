@@ -310,6 +310,27 @@ function update_active_env_description(description::String)
 end
 
 """
+    warn_ignored_local_files(script_path::String, env_name::String, is_silent::Bool)
+
+Warn the user if a local Project.toml or Manifest.toml exists in the script's
+directory but is being ignored because a named environment is active.
+"""
+function warn_ignored_local_files(script_path::String, env_name::String, is_silent::Bool)
+    if is_silent
+        return nothing
+    end
+    script_dir = dirname(script_path)
+    local_project = joinpath(script_dir, "Project.toml")
+    local_manifest = joinpath(script_dir, "Manifest.toml")
+    if isfile(local_project) || isfile(local_manifest)
+        @warn "QuickEnv: Local Project.toml or Manifest.toml exists in the " *
+              "script's directory, but is being ignored because named " *
+              "environment @$env_name is activated."
+    end
+    return nothing
+end
+
+"""
     __init__()
 
 Initialization hook executed automatically when `QuickEnv` is imported.
@@ -336,6 +357,7 @@ function __init__()
 
     # Handle forced environment creation or updating
     if handle_forced_creation(create_env, required_packages, is_silent)
+        warn_ignored_local_files(script_path, create_env, is_silent)
         update_active_env_description(description)
         return nothing
     end
@@ -344,6 +366,15 @@ function __init__()
     handle_matching_or_fallback(
         required_packages, fallback_env, excluded_envs, is_silent, script_path
     )
+
+    # Check if local files are ignored by active named/fallback environment
+    project_file = Base.active_project()
+    if project_file !== nothing
+        active_dir = dirname(project_file)
+        if active_dir != dirname(script_path) && !occursin(r"^v\d+\.\d+$", basename(active_dir))
+            warn_ignored_local_files(script_path, basename(active_dir), is_silent)
+        end
+    end
 
     update_active_env_description(description)
     return nothing

@@ -183,11 +183,15 @@ Sets or updates the custom description for the activated environment's `Project.
 ```
 *Note: The keyword `global` acts as a wildcard excluding standard versioned global environments (e.g., `@v1.12`).*
 
-#### 5. Silent execution (`quickenv_silent`)
+#### 5. Silent execution (`quickenv_silent` or `QUICKENV_SILENT` environment variable)
+You can suppress all `QuickEnv` and `Pkg` environment activation logs during load time either by using a magic comment:
 ```julia
 # quickenv_silent: true
 ```
-*Suppresses all `QuickEnv` and `Pkg` environment activation logs during load time.*
+Or by setting the system environment variable globally in your shell:
+```bash
+export QUICKENV_SILENT=true
+```
 
 ---
 

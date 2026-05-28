@@ -217,4 +217,26 @@ using Test
         @test !("broken_env" in res4)
         @test !("plotting" in res4)
     end
+
+    @testset "Ignored Local Project/Manifest Warning" begin
+        # Create a temp directory to simulate a script directory with Project.toml
+        tmp_dir = mktempdir()
+        try
+            script_path = joinpath(tmp_dir, "script.jl")
+            local_proj = joinpath(tmp_dir, "Project.toml")
+            touch(local_proj)
+            
+            # 1. Non-silent mode: should emit a warning log
+            @test_logs (:warn, r"QuickEnv: Local Project.toml or Manifest.toml exists.*") begin
+                QuickEnv.warn_ignored_local_files(script_path, "plotting_test", false)
+            end
+
+            # 2. Silent mode: should emit no warning log
+            @test_logs begin
+                QuickEnv.warn_ignored_local_files(script_path, "plotting_test", true)
+            end
+        finally
+            rm(tmp_dir, recursive=true, force=true)
+        end
+    end
 end
