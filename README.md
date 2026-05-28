@@ -4,16 +4,51 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Julia Version](https://img.shields.io/badge/julia-v1.6+-8A2BE2.svg)](https://julialang.org/)
 
-`QuickEnv.jl` is a zero-configuration, auto-bootstrapping environment manager for Julia scripts. It brings Pluto-like automated package management elegance to standard standalone `.jl` scripts, dynamically resolving and isolating dependencies without directory clutter or manual project initialization.
+`QuickEnv.jl` is a zero-configuration, auto-bootstrapping environment
+manager for Julia scripts. It brings Pluto-like automated package
+management elegance to standard standalone `.jl` scripts, dynamically
+resolving and isolating dependencies without directory clutter or
+manual project initialization.
 
 ---
 
-## 📖 The Problem and the Solution
+## ⚡ Quick start:  Write the Julia program, run the Julia program
+
+The problem is that when you run a Julia program you have to worry
+about the Julia environment the program is run in. This package solves
+this problem by automatically creating a local environment, installing
+missing packages, and running the program in this environment. 
+
+### The default behavior: Zero configuration 
+It automatically activates the script's local directory and installs all missing packages to the local environment (i.e., bootstrapping missing packages), and then goes on to run the program:
+
+```julia
+#!/usr/bin/env julia
+using QuickEnv
+using Plots
+```
+
+Now, just run it! Everything would just work (after installing
+QuickEnv in your global environment one time [sorry]). QuickEnv would
+take care of making things work by installing the missing packages in
+the local environment, etc. 
+
+There is an important exception to the above behavior: If QuickEnv finds any existing [named environment](#-understanding-shared-named-environments) satisfying your imports (e.g. `@plotting`), it uses it instead. That creates a convenient way to have several default environments that fit most Julia programs.
+
+
+
+## 📖 More on the problem and the solution
 
 Julia developers typically manage package environments in three ways, each with distinct trade-offs:
 
 1. **The Global Environment (`@v1.x`)**: Easy to use, but eventually leads to version conflict deadlocks ("Dependency Hell") as different packages declare conflicting version constraints.
-2. **Local Directory Projects (`--project=.`)**: Highly reproducible, but creates massive file clutter and repetitive setup overhead for single-file scripts or quick calculations. Furthermore, it results in huge disk footprint and compile-time bloat due to redundant package downloads and precompilations.
+
+2. **Local Directory Projects (`--project=.`)**: Highly reproducible,
+   but creates massive file clutter and repetitive setup overhead for
+   single-file scripts or quick calculations. Furthermore, it results
+   in huge disk footprint and compile-time bloat due to redundant
+   package downloads and precompilations.
+
 3. **Shared Named Environments (`@plotting`, `@data`)**: The hybrid solution. Grouping related workflows into shared, globally accessible environments.
 
 **QuickEnv.jl is an automation layer on top of named and local environments.**
@@ -25,20 +60,11 @@ When you place `using QuickEnv` at the top of a script, it scans your code impor
 
 ---
 
-## ⚡ Quick Start
+## Slow start
 
 Get started by simply placing `using QuickEnv` at the top of your scripts. You can run in zero-configuration mode, force a specific [named environment](#-understanding-shared-named-environments) to be created and managed, or specify a [named environment](#-understanding-shared-named-environments) fallback.
 
-### 1. Zero-Configuration (No Magic Comments)
-Matches any existing [named environment](#-understanding-shared-named-environments) satisfying your imports (e.g. `@plotting`). If none is found, it automatically activates the script's local directory and install all missing packages to the local environment (i.e., bootstrapping missing packages), and then goes on to run the program:
-
-```julia
-#!/usr/bin/env julia
-using QuickEnv
-using Plots
-```
-
-### 2. Forced Named Environment Creation (`create`)
+### 1. Forced Named Environment Creation (`create`)
 Forces `QuickEnv` to use the `@science` [named environment](#-understanding-shared-named-environments). It creates `@science` if it's missing, and automatically installs the required package dependencies:
 
 ```julia
@@ -48,7 +74,8 @@ using QuickEnv # create: science
 using LsqFit
 ```
 
-### 3. Explicit Named Environment Fallback (`fallback`)
+### 2. Explicit Named Environment Fallback (`fallback`)
+
 Searches your existing custom [named environments](#-understanding-shared-named-environments) for a match first. If no matching environment satisfies your dependencies, it falls back to creating and bootstrapping the `@plotting` [named environment](#-understanding-shared-named-environments):
 
 ```julia
@@ -62,12 +89,16 @@ using Plots
 
 ## 🧠 Understanding Shared Named Environments
 
-A **Shared Named Environment** in Julia (such as `@plotting` or `@data`) is a globally accessible, isolated package environment stored in your home directory under `~/.julia/environments/`.
+A **Shared Named Environment** in Julia (such as `@plotting` or
+`@data`) is a globally accessible, isolated package environment stored
+in your home directory under `~/.julia/environments/`.
 
-To understand why they are highly useful, it is helpful to compare the three package management paradigms in Julia:
+To understand why they are highly useful, it is helpful to compare the
+three package management paradigms in Julia:
 
 ### 1. The Global Environment (`@v1.x`)
 - **How it works**: By default, if you run Julia without specifying a project directory, packages are installed in the global scope.
+
 - **The Problem**: Installing all packages globally eventually leads to **"Dependency Hell"**—conflicts where one package requires `DataFrames v0.22` while another requires `DataFrames v1.0`. The package manager will lock up and refuse to install or update packages.
 
 ### 2. Local Directory Projects (`--project=.`)
