@@ -1,0 +1,8 @@
+# Julia package development ignores
+/Manifest.toml
+/examples/output/
+*.jl.cov
+*.jl.mem
+*.jl.meta
+/docs/build/
+.DS_Store
