@@ -122,11 +122,11 @@ three package management paradigms in Julia:
 
 ### 3. Shared named environments (the hybrid solution)
 - **How it works**: You group related packages into named, globally accessible scopes (like `@plotting` for graphics, or `@data` for data handling).
-- **The Problem**: To run a script inside a shared named environment, you must manually remember its name and explicitly pass it on the command line every single time (e.g., `julia --project=@plotting script.jl`). If you forget to include the flag, the script runs in the wrong environment (usually the global scope).
 - **The Benefit**: They are the perfect compromise. 
   - **No Conflict**: Keeps your global scope clean, avoiding dependency deadlocks.
   - **No Clutter**: No need to create folders or project files for every standalone script.
   - **Instant Load**: Since packages are resolved once in the shared named environment, your scripts **compile and load instantly** on subsequent runs.
+- **The Problem**: To run a script inside a shared named environment, you must manually remember its name and explicitly pass it on the command line every single time (e.g., `julia --project=@plotting script.jl`). If you forget to include the flag, the script runs in the wrong environment (usually the global scope).
 
 ---
 
