@@ -25,6 +25,41 @@ When you place `using QuickEnv` at the top of a script, it scans your code impor
 
 ---
 
+## ⚡ Quick Start
+
+Get started by simply placing `using QuickEnv` at the top of your scripts. You can run in zero-configuration mode, force a specific named environment to be created and managed, or specify a named environment fallback.
+
+### 1. Zero-Configuration (No Magic Comments)
+Matches any existing named environment satisfying your imports (e.g. `@plotting`). If none is found, it automatically activates the script's local directory and bootstraps missing packages:
+
+```julia
+#!/usr/bin/env julia
+using QuickEnv
+using Plots
+```
+
+### 2. Forced Named Environment Creation (`create`)
+Forces `QuickEnv` to use the `@science` named environment. It creates `@science` if it's missing, and automatically installs the required package dependencies:
+
+```julia
+#!/usr/bin/env julia
+using QuickEnv # create: science
+
+using LsqFit
+```
+
+### 3. Explicit Named Environment Fallback (`fallback`)
+Searches your existing custom named environments for a match first. If no matching environment satisfies your dependencies, it falls back to creating and bootstrapping the `@plotting` named environment:
+
+```julia
+#!/usr/bin/env julia
+using QuickEnv # fallback: plotting
+
+using Plots
+```
+
+---
+
 ## 🚀 Key Features
 
 - **Implicit Code Parsing**: Reads your script on load, identifying exact imported packages (`using` and `import` statements), while ignoring comments and sub-imports.
