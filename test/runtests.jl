@@ -226,12 +226,13 @@ using Test
             local_proj = joinpath(tmp_dir, "Project.toml")
             touch(local_proj)
             
-            # 1. Non-silent mode: should emit a warning log
-            @test_logs (:warn, r"QuickEnv: Local Project.toml or Manifest.toml exists.*") begin
+            # 1. Non-silent mode: should emit a warning log and an info log
+            QuickEnv.tip_printed[] = false
+            @test_logs (:warn, r"QuickEnv: Local Project.toml or Manifest.toml exists.*") (:info, r"QuickEnv - To silence add magic comment.*") begin
                 QuickEnv.warn_ignored_local_files(script_path, "plotting_test", false)
             end
 
-            # 2. Silent mode: should emit no warning log
+            # 2. Silent mode: should emit no warning or info logs
             @test_logs begin
                 QuickEnv.warn_ignored_local_files(script_path, "plotting_test", true)
             end
