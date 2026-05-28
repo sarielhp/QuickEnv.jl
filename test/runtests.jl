@@ -9,9 +9,8 @@ using Test
         #! /bin/env julial
         # quickenv_fallback: plotting_test
         # quickenv_exclude: global, outdated_plotting, broken_env
-        # quickenv_silent: true
         
-        using QuickEnv
+        using QuickEnv # Silent
         using Plots
         import DataFrames: DataFrame
         
@@ -46,7 +45,7 @@ using Test
             @test "broken_env" in excluded
             @test length(excluded) == 3
 
-            # Verify silent extraction
+            # Verify silent extraction from inline comment
             @test is_silent == true
         finally
             # Clean up the temp file

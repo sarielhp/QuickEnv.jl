@@ -113,6 +113,17 @@ function parse_script_metadata(script_path::String)
     
     if isfile(script_path)
         for line in eachline(script_path)
+            # Check for inline silence comment on the QuickEnv import line
+            # e.g., using QuickEnv # Silent
+            parts = split(line, '#')
+            if length(parts) > 1
+                comment_part = strip(parts[2])
+                clean_line = strip(parts[1])
+                if occursin(r"(?i)silent", comment_part) && occursin(r"\bQuickEnv\b", clean_line)
+                    is_silent = true
+                end
+            end
+
             # 1. Parse fallback magic comment
             m_fallback = match(r"^\s*#\s*quickenv_fallback\s*:\s*([a-zA-Z0-9_\-]+)", line)
             if m_fallback !== nothing
