@@ -13,7 +13,10 @@ ensuring it is shown at most once.
 """
 function print_silence_tip(is_silent::Bool)
     if !is_silent && !tip_printed[]
-        @info "QuickEnv - To silence add magic comment: 'using QuickEnv  # silent'"
+        println(stderr)
+        @info "QuickEnv - To silence add magic comment:\n" *
+              "'using QuickEnv  # silent'"
+        println(stderr)
         tip_printed[] = true
     end
 end
@@ -77,8 +80,10 @@ function handle_forced_creation(
         current_project = Base.active_project()
         if current_project === nothing || !occursin(create_env, current_project)
             if !is_silent
-                @info "QuickEnv: Found existing environment @$create_env " *
-                    "with all dependencies. Activating..."
+                println(stderr)
+                @info "QuickEnv: Found existing environment @$create_env\n" *
+                      "with all dependencies. Activating..."
+                println(stderr)
                 print_silence_tip(is_silent)
             end
             Pkg.activate(create_env; shared=true, io=is_silent ? devnull : stderr)
@@ -125,7 +130,10 @@ function activate_matched_env(matching::Vector{String}, is_silent::Bool)
     current_project = Base.active_project()
     if current_project === nothing || !occursin(env_name, current_project)
         if !is_silent
-            @info "QuickEnv: Found matching environment @$env_name. " * "Activating..."
+            println(stderr)
+            @info "QuickEnv: Found matching environment @$env_name.\n" *
+                  "Activating..."
+            println(stderr)
             print_silence_tip(is_silent)
         end
         Pkg.activate(env_name; shared=true, io=is_silent ? devnull : stderr)
@@ -146,8 +154,10 @@ function activate_fallback_env(fallback_env::String, script_path::String, is_sil
         # Use specified named fallback environment
         printed_info = !is_silent
         if printed_info
-            @info "QuickEnv: No matching environment found. " *
-                "Activating fallback @$fallback_env..."
+            println(stderr)
+            @info "QuickEnv: No matching environment found.\n" *
+                  "Activating fallback @$fallback_env..."
+            println(stderr)
         end
         Pkg.activate(fallback_env; shared=true, io=is_silent ? devnull : stderr)
         return "@" * fallback_env, printed_info
@@ -157,8 +167,10 @@ function activate_fallback_env(fallback_env::String, script_path::String, is_sil
     script_dir = dirname(script_path)
     printed_info = !is_silent
     if printed_info
-        @info "QuickEnv: No matching environment found. " *
-            "Activating local environment at $script_dir..."
+        println(stderr)
+        @info "QuickEnv: No matching environment found.\n" *
+              "Activating local environment at $script_dir..."
+        println(stderr)
     end
     Pkg.activate(script_dir; io=is_silent ? devnull : stderr)
     return "local directory environment", printed_info
@@ -208,8 +220,10 @@ function bootstrap_packages(
     missing_pkgs = filter(pkg -> !haskey(deps, pkg), required_packages)
     if !isempty(missing_pkgs)
         if !is_silent
-            @info "QuickEnv: Installing missing packages into " *
-                "$target_env_display: $missing_pkgs"
+            println(stderr)
+            @info "QuickEnv: Installing missing packages into\n" *
+                  "$target_env_display: $missing_pkgs"
+            println(stderr)
         end
         Pkg.add(missing_pkgs; io=is_silent ? devnull : stderr)
         return nothing

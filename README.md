@@ -251,7 +251,11 @@ end
 
 *Output (if local `Project.toml` exists in the script directory)*:
 ```log
-[ Info: QuickEnv - To silence add magic comment: 'using QuickEnv  # silent'
+┌ Info: QuickEnv: Found matching environment @plotting.
+└ Activating...
+
+┌ Info: QuickEnv - To silence add magic comment:
+└ 'using QuickEnv  # silent'
 
 ┌ Warning: QuickEnv: Local Project.toml or Manifest.toml exists in the
 │ script's directory, but is being ignored because named
