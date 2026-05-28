@@ -1,6 +1,6 @@
 name = "QuickEnv"
 uuid = "b4c4897f-8d96-4155-9008-62d2948bbcdb"
-version = "1.0.0"
+version = "0.1.0"
 authors = ["Sariel <sariel@example.com>"]
 
 [deps]
