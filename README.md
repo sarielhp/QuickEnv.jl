@@ -27,10 +27,10 @@ When you place `using QuickEnv` at the top of a script, it scans your code impor
 
 ## ⚡ Quick Start
 
-Get started by simply placing `using QuickEnv` at the top of your scripts. You can run in zero-configuration mode, force a specific named environment to be created and managed, or specify a named environment fallback.
+Get started by simply placing `using QuickEnv` at the top of your scripts. You can run in zero-configuration mode, force a specific [named environment](#-understanding-shared-named-environments) to be created and managed, or specify a [named environment](#-understanding-shared-named-environments) fallback.
 
 ### 1. Zero-Configuration (No Magic Comments)
-Matches any existing named environment satisfying your imports (e.g. `@plotting`). If none is found, it automatically activates the script's local directory and bootstraps missing packages:
+Matches any existing [named environment](#-understanding-shared-named-environments) satisfying your imports (e.g. `@plotting`). If none is found, it automatically activates the script's local directory and bootstraps missing packages:
 
 ```julia
 #!/usr/bin/env julia
@@ -39,7 +39,7 @@ using Plots
 ```
 
 ### 2. Forced Named Environment Creation (`create`)
-Forces `QuickEnv` to use the `@science` named environment. It creates `@science` if it's missing, and automatically installs the required package dependencies:
+Forces `QuickEnv` to use the `@science` [named environment](#-understanding-shared-named-environments). It creates `@science` if it's missing, and automatically installs the required package dependencies:
 
 ```julia
 #!/usr/bin/env julia
@@ -49,7 +49,7 @@ using LsqFit
 ```
 
 ### 3. Explicit Named Environment Fallback (`fallback`)
-Searches your existing custom named environments for a match first. If no matching environment satisfies your dependencies, it falls back to creating and bootstrapping the `@plotting` named environment:
+Searches your existing custom [named environments](#-understanding-shared-named-environments) for a match first. If no matching environment satisfies your dependencies, it falls back to creating and bootstrapping the `@plotting` [named environment](#-understanding-shared-named-environments):
 
 ```julia
 #!/usr/bin/env julia
@@ -57,6 +57,29 @@ using QuickEnv # fallback: plotting
 
 using Plots
 ```
+
+---
+
+## 🧠 Understanding Shared Named Environments
+
+A **Shared Named Environment** in Julia (such as `@plotting` or `@data`) is a globally accessible, isolated package environment stored in your home directory under `~/.julia/environments/`.
+
+To understand why they are highly useful, it is helpful to compare the three package management paradigms in Julia:
+
+### 1. The Global Environment (`@v1.x`)
+- **How it works**: By default, if you run Julia without specifying a project directory, packages are installed in the global scope.
+- **The Problem**: Installing all packages globally eventually leads to **"Dependency Hell"**—conflicts where one package requires `DataFrames v0.22` while another requires `DataFrames v1.0`. The package manager will lock up and refuse to install or update packages.
+
+### 2. Local Directory Projects (`--project=.`)
+- **How it works**: Tracks package dependencies inside a specific project folder using `Project.toml` and `Manifest.toml` files.
+- **The Problem**: While ideal for shared repositories, it creates **directory clutter** and **massive disk/compilation overhead** for one-off calculations or single scripts. You are forced to create a new folder and wait for packages to compile redundantly for every script.
+
+### 3. Shared Named Environments (The Hybrid Solution)
+- **How it works**: You group related packages into named, globally accessible scopes (like `@plotting` for graphics, or `@data` for data handling).
+- **The Benefit**: They are the perfect compromise. 
+  - **No Conflict**: Keeps your global scope clean, avoiding dependency deadlocks.
+  - **No Clutter**: No need to create folders or project files for every standalone script.
+  - **Instant Load**: Since packages are resolved once in the shared named environment, your scripts **compile and load instantly** on subsequent runs.
 
 ---
 
