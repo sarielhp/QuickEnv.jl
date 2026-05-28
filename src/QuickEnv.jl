@@ -18,10 +18,14 @@ function __init__()
     script_path = abspath(script_path)
 
     # 2. Parse script for package imports, fallback, and exclusions
-    required_packages, fallback_env, excluded_envs = parse_script_metadata(script_path)
+    required_packages, fallback_env, excluded_envs, script_silent = parse_script_metadata(script_path)
     
     # Exclude QuickEnv itself from dependency matching
     filter!(p -> p != "QuickEnv", required_packages)
+
+    # Resolve global silence (via QUICKENV_SILENT environment variable or script comment)
+    env_silent = get(ENV, "QUICKENV_SILENT", "false")
+    is_silent = (lowercase(env_silent) == "true") || script_silent
 
     # 3. Locate all satisfying named environments
     matching = find_matching_envs(required_packages)
@@ -37,8 +41,10 @@ function __init__()
         # Activate the matched environment
         current_project = Base.active_project()
         if current_project === nothing || !occursin(env_name, current_project)
-            @info "QuickEnv: Found matching environment @$env_name. Activating..."
-            Pkg.activate(env_name, shared=true)
+            if !is_silent
+                @info "QuickEnv: Found matching environment @$env_name. Activating..."
+            end
+            Pkg.activate(env_name, shared=true, io=is_silent ? devnull : stderr)
         end
     else
         # 4. No matching environment found! Apply fallback logic.
@@ -46,14 +52,18 @@ function __init__()
         
         if !isempty(fallback_env)
             # Use specified named fallback environment
-            @info "QuickEnv: No matching environment found. Activating fallback @$fallback_env..."
-            Pkg.activate(fallback_env, shared=true)
+            if !is_silent
+                @info "QuickEnv: No matching environment found. Activating fallback @$fallback_env..."
+            end
+            Pkg.activate(fallback_env, shared=true, io=is_silent ? devnull : stderr)
             target_env_display = "@" * fallback_env
         else
             # Default: Activate local directory environment
             script_dir = dirname(script_path)
-            @info "QuickEnv: No matching environment found. Activating local environment at $script_dir..."
-            Pkg.activate(script_dir)
+            if !is_silent
+                @info "QuickEnv: No matching environment found. Activating local environment at $script_dir..."
+            end
+            Pkg.activate(script_dir, io=is_silent ? devnull : stderr)
             target_env_display = "local directory environment"
         end
 
@@ -63,7 +73,9 @@ function __init__()
             # Safety Check: Prevent adding packages to the global environment
             env_name = basename(dirname(project_file))
             if occursin(r"^v\d+\.\d+$", env_name)
-                @warn "QuickEnv: Safety check triggered. Blocked installation of packages into the global environment ($env_name)."
+                if !is_silent
+                    @warn "QuickEnv: Safety check triggered. Blocked installation of packages into the global environment ($env_name)."
+                end
                 return
             end
 
@@ -79,8 +91,10 @@ function __init__()
             
             missing_pkgs = filter(pkg -> !haskey(deps, pkg), required_packages)
             if !isempty(missing_pkgs)
-                @info "QuickEnv: Installing missing packages into $target_env_display: $missing_pkgs"
-                Pkg.add(missing_pkgs)
+                if !is_silent
+                    @info "QuickEnv: Installing missing packages into $target_env_display: $missing_pkgs"
+                end
+                Pkg.add(missing_pkgs, io=is_silent ? devnull : stderr)
             end
         end
     end
@@ -95,6 +109,7 @@ function parse_script_metadata(script_path::String)
     packages = String[]
     fallback_env = ""
     excluded_envs = String[]
+    is_silent = false
     
     if isfile(script_path)
         for line in eachline(script_path)
@@ -112,7 +127,13 @@ function parse_script_metadata(script_path::String)
                 end
             end
 
-            # 3. Extract package imports
+            # 3. Parse silent magic comment (e.g., # quickenv_silent: true)
+            m_silent = match(r"^\s*#\s*quickenv_silent\s*:\s*([a-zA-Z0-9_\-]+)", line)
+            if m_silent !== nothing
+                is_silent = lowercase(strip(m_silent.captures[1])) == "true"
+            end
+
+            # 4. Extract package imports
             clean_line = strip(first(split(line, '#')))
             m = match(r"^\s*(using|import)\s+(.*)$", clean_line)
             if m !== nothing
@@ -133,7 +154,7 @@ function parse_script_metadata(script_path::String)
             end
         end
     end
-    return packages, fallback_env, excluded_envs
+    return packages, fallback_env, excluded_envs, is_silent
 end
 
 function find_matching_envs(required_pkgs::Vector{String})

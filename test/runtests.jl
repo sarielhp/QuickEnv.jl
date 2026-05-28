@@ -9,6 +9,7 @@ using Test
         #! /bin/env julial
         # quickenv_fallback: plotting_test
         # quickenv_exclude: global, outdated_plotting, broken_env
+        # quickenv_silent: true
         
         using QuickEnv
         using Plots
@@ -26,7 +27,7 @@ using Test
             close(io)
             
             # Parse the metadata
-            pkgs, fallback, excluded = QuickEnv.parse_script_metadata(tmp_path)
+            pkgs, fallback, excluded, is_silent = QuickEnv.parse_script_metadata(tmp_path)
             
             # Verify package extraction
             @test "QuickEnv" in pkgs
@@ -44,6 +45,9 @@ using Test
             @test "outdated_plotting" in excluded
             @test "broken_env" in excluded
             @test length(excluded) == 3
+
+            # Verify silent extraction
+            @test is_silent == true
         finally
             # Clean up the temp file
             rm(tmp_path)
