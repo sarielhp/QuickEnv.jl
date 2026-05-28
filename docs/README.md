@@ -1,4 +1,4 @@
-# QuickEnv.jl
+# QuickEnv.jl User Guide
 
 `QuickEnv.jl` is a zero-configuration auto-bootstrapping utility package that dynamically manages, matches, and activates Julia environments. It is designed to bring Pluto-like automatic package management elegance to standard standalone `.jl` scripts.
 
@@ -11,6 +11,7 @@
 - **Dynamic Fallbacks**: Supports explicitly declaring a fallback environment to compile inside if no current environments satisfy the script's imports.
 - **Automatic Bootstrapping**: If no matching named environments exist, it creates a local project environment in the script's folder (or fallback named environment) and automatically installs all missing package dependencies using `Pkg.add`.
 - **Exclusion Filters**: Supports custom comments to restrict specific environments or standard global ones from being used.
+- **Silent Mode**: Suppresses environment activation and package logging dynamically at runtime.
 
 ---
 
@@ -30,20 +31,19 @@ Pkg.develop(path="/home/sariel/prog/26/misc/julia_envs/QuickEnv")
 
 You can configure `QuickEnv` directly inside the comments of your Julia script. These comments are completely ignored by the standard Julia parser, making them 100% syntactically safe and standard.
 
-### 1. Declaring a Fallback Environment
-If no existing named environment satisfies the dependencies, force `QuickEnv` to activate (and create if missing) a specific named environment:
+### 1. Compact Inline Format (Recommended)
+You can declare fallback named environments, exclusions, and quiet flags all on the same line as your import:
 
 ```julia
-# quickenv_fallback: plotting
+using QuickEnv # fallback: plotting, exclude: global, silent
 ```
 
-### 2. Excluding Environments
-To prevent your script from running in a "dirty" global environment, or to bypass broken environments, declare exclusions as a comma-separated list:
+### 2. Standalone Multiline Format
+You can also declare these options on individual lines before the package loads:
 
-```julia
-# quickenv_exclude: global, broken_plotting
-```
-*Note: Using the keyword `global` excludes all standard versioned environments like `@v1.12`.*
+- **Fallback target**: `# quickenv_fallback: plotting`
+- **Exclusions**: `# quickenv_exclude: global, broken_plotting`
+- **Silent Mode**: `# quickenv_silent: true`
 
 ---
 
@@ -52,10 +52,8 @@ To prevent your script from running in a "dirty" global environment, or to bypas
 Simply place `using QuickEnv` at the very beginning of your Julia scripts:
 
 ```julia
-# quickenv_fallback: plotting
-# quickenv_exclude: global
+using QuickEnv # fallback: plotting, exclude: global, silent
 
-using QuickEnv
 using Plots
 using Cairo
 

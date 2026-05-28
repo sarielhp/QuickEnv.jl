@@ -1,8 +1,5 @@
 #! /bin/env julial
-# quickenv_fallback: data
-# quickenv_exclude: global
-
-using QuickEnv
+using QuickEnv # fallback: data, exclude: global, silent
 using DataFrames
 using CSV
 

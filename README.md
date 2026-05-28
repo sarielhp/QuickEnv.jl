@@ -49,36 +49,50 @@ Pkg.add(url="https://github.com/yourusername/QuickEnv.jl.git")
 
 ## 🛠️ Declarative Magic Comments
 
-`QuickEnv.jl` supports magic comments at the top of your scripts. These comments are treated as standard comments by Julia but parsed as declarative metadata by `QuickEnv.jl`.
+`QuickEnv.jl` supports declarative magic comments to customize loading behaviors. These can be defined in two formats:
 
-### 1. Fallback Target (`quickenv_fallback`)
-Specify a named environment to activate and bootstrap if no existing environments satisfy the package requirements:
+1. **Compact Inline Format (Recommended)**: Declared entirely on the `using QuickEnv` import line.
+2. **Standalone Multiline Format**: Declared as separate comments at the top of the file.
 
+### A. Compact Inline Format (Recommended)
+You can declare fallback named environments, exclusions, and quiet flags all on the same line as your import:
+
+```julia
+using QuickEnv # fallback: plotting, exclude: global, silent
+```
+
+### B. Standalone Multiline Format
+You can also declare these options on individual lines before the package loads:
+
+#### 1. Fallback Target (`quickenv_fallback`)
 ```julia
 # quickenv_fallback: plotting
 ```
 *If `@plotting` does not exist or lacks the required packages, `QuickEnv` will create `@plotting` and run `Pkg.add` to resolve all missing dependencies automatically.*
 
-### 2. Forbidden Environments (`quickenv_exclude`)
-Exclude specific environments (such as a dirty global scope or broken experimental environments) from being matched:
-
+#### 2. Forbidden Environments (`quickenv_exclude`)
 ```julia
 # quickenv_exclude: global, broken_plotting, experimental_ml
 ```
 *Note: The keyword `global` acts as a wildcard excluding standard versioned global environments (e.g., `@v1.12`).*
 
+#### 3. Silent Execution (`quickenv_silent`)
+```julia
+# quickenv_silent: true
+```
+*Completely suppresses all `QuickEnv` and `Pkg` environment activation logs during load time.*
+
 ---
 
 ## 💻 Code Examples
 
-### Example A: Global Environment Isolation (Bypassing Global Scope)
-This script prevents itself from running in the global environment. If no custom named environment matches, it automatically isolates and compiles in the script's local directory:
+### Example A: Global Environment Isolation & Plotting (Unified Inline Format)
+This script prevents itself from running in the global environment, sets `@plotting` as the fallback environment, and executes completely silently:
 
 ```julia
 #! /bin/env julial
-# quickenv_exclude: global
+using QuickEnv # fallback: plotting, exclude: global, silent
 
-using QuickEnv
 using Plots
 using Cairo
 
@@ -91,15 +105,13 @@ function (@main)(args)
 end
 ```
 
-### Example B: Dedicated Named Fallback
-This script requests a dedicated named environment `@data`. If no environment currently contains both `DataFrames` and `CSV`, it will automatically create `@data`, download/compile the packages, and run:
+### Example B: Dedicated Named Fallback & Data Setup (Unified Inline Format)
+This script requests a dedicated named environment `@data`. If no environment currently contains both `DataFrames` and `CSV`, it will automatically create `@data`, download/compile the packages, and run completely silently:
 
 ```julia
 #! /bin/env julial
-# quickenv_fallback: data
-# quickenv_exclude: global
+using QuickEnv # fallback: data, exclude: global, silent
 
-using QuickEnv
 using DataFrames
 using CSV
 

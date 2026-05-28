@@ -1,8 +1,5 @@
 #! /bin/env julial
-# quickenv_fallback: plotting
-# quickenv_exclude: global
-
-using QuickEnv
+using QuickEnv # fallback: plotting, exclude: global, silent
 using Plots
 using Cairo
 
