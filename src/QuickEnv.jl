@@ -3,84 +3,71 @@ module QuickEnv
 using Pkg
 using TOML
 
-function __init__()
-    # 1. Get the absolute path to the current script
+function get_script_path()
     script_path = PROGRAM_FILE
     if isempty(script_path)
         sp = Base.source_path()
         script_path = sp !== nothing ? sp : ""
     end
+    return isempty(script_path) ? "" : abspath(script_path)
+end
 
-    # If in interactive REPL, do nothing
-    isempty(script_path) && return
+function handle_forced_creation(create_env::String, required_packages::Vector{String}, is_silent::Bool)
+    isempty(create_env) && return false
 
-    # Ensure path is absolute for directory tracking
-    script_path = abspath(script_path)
-
-    # 2. Parse script for package imports, fallback, exclusions, silence, and forced creation
-    required_packages, fallback_env, excluded_envs, script_silent, create_env = parse_script_metadata(script_path)
+    # Search if environment already exists and contains all required packages
+    env_dir = joinpath(DEPOT_PATH[1], "environments", create_env)
+    toml_path = joinpath(env_dir, "Project.toml")
     
-    # Exclude QuickEnv itself from dependency matching
-    filter!(p -> ( p != "QuickEnv" ), required_packages)
-
-    # Resolve global silence (via QUICKENV_SILENT environment variable or script comment)
-    env_silent = get(ENV, "QUICKENV_SILENT", "false")
-    is_silent = (lowercase(env_silent) == "true") || script_silent
-
-    # --- FORCED ENVIRONMENT CREATION / UPDATING LOGIC ---
-    if !isempty(create_env)
-        # Search if environment already exists and contains all required packages
-        env_dir = joinpath(DEPOT_PATH[1], "environments", create_env)
-        toml_path = joinpath(env_dir, "Project.toml")
-        
-        has_all_packages = false
-        missing_pkgs = copy(required_packages)
-        
-        if isfile(toml_path)
-            try
-                project_data = TOML.parsefile(toml_path)
-                deps = get(project_data, "deps", Dict{String, Any}())
-                filter!(pkg -> !haskey(deps, pkg), missing_pkgs)
-                if isempty(missing_pkgs)
-                    has_all_packages = true
-                end
-            catch
-                # Ignore parsing error
+    has_all_packages = false
+    missing_pkgs = copy(required_packages)
+    
+    if isfile(toml_path)
+        try
+            project_data = TOML.parsefile(toml_path)
+            deps = get(project_data, "deps", Dict{String, Any}())
+            filter!(pkg -> !haskey(deps, pkg), missing_pkgs)
+            if isempty(missing_pkgs)
+                has_all_packages = true
             end
+        catch
+            # Ignore parsing error
         end
-        
-        if has_all_packages
-            # Simply activate the existing satisfying environment
-            current_project = Base.active_project()
-            if current_project === nothing || !occursin(create_env, current_project)
-                if !is_silent
-                    @info "QuickEnv: Found existing environment @$create_env with all dependencies. Activating..."
-                end
-                Pkg.activate(create_env, shared=true, io=is_silent ? devnull : stderr)
-            end
-        else
-            # We need to add packages! Disable silent mode.
-            is_silent = false
-            
-            # Print detailed description BEFORE modifying the environment
-            println(stderr, "\n=== QuickEnv: Environment Configuration Required ===")
-            if !isdir(env_dir)
-                println(stderr, "Action: Creating new shared named environment @$create_env.")
-            else
-                println(stderr, "Action: Updating existing shared named environment @$create_env.")
-            end
-            println(stderr, "Reason: Missing required packages: $missing_pkgs")
-            println(stderr, "Triggering automatic package installation...")
-            println(stderr, "====================================================\n")
-            
-            # Activate and bootstrap
-            Pkg.activate(create_env, shared=true, io=stderr)
-            Pkg.add(missing_pkgs, io=stderr)
-        end
-        return
     end
+    
+    if has_all_packages
+        # Simply activate the existing satisfying environment
+        current_project = Base.active_project()
+        if current_project === nothing || !occursin(create_env, current_project)
+            if !is_silent
+                @info "QuickEnv: Found existing environment @$create_env with all dependencies. Activating..."
+            end
+            Pkg.activate(create_env, shared=true, io=is_silent ? devnull : stderr)
+        end
+    else
+        # We need to add packages! Disable silent mode.
+        is_silent = false
+        
+        # Print detailed description BEFORE modifying the environment
+        println(stderr, "\n=== QuickEnv: Environment Configuration Required ===")
+        if !isdir(env_dir)
+            println(stderr, "Action: Creating new shared named environment @$create_env.")
+        else
+            println(stderr, "Action: Updating existing shared named environment @$create_env.")
+        end
+        println(stderr, "Reason: Missing required packages: $missing_pkgs")
+        println(stderr, "Triggering automatic package installation...")
+        println(stderr, "====================================================\n")
+        
+        # Activate and bootstrap
+        Pkg.activate(create_env, shared=true, io=stderr)
+        Pkg.add(missing_pkgs, io=stderr)
+    end
+    return true
+end
 
-    # 3. Locate all satisfying named environments
+function handle_matching_or_fallback(required_packages::Vector{String}, fallback_env::String, excluded_envs::Vector{String}, is_silent::Bool, script_path::String)
+    # Locate all satisfying named environments
     matching = find_matching_envs(required_packages)
 
     # Filter matching list by exclusions and fallback request rules
@@ -100,7 +87,7 @@ function __init__()
             Pkg.activate(env_name, shared=true, io=is_silent ? devnull : stderr)
         end
     else
-        # 4. No matching environment found! Apply fallback logic.
+        # No matching environment found! Apply fallback logic.
         target_env_display = ""
         
         if !isempty(fallback_env)
@@ -151,6 +138,28 @@ function __init__()
             end
         end
     end
+end
+
+function __init__()
+    script_path = get_script_path()
+    isempty(script_path) && return
+
+    required_packages, fallback_env, excluded_envs, script_silent, create_env = parse_script_metadata(script_path)
+    
+    # Exclude QuickEnv itself from dependency matching
+    filter!(p -> (p != "QuickEnv"), required_packages)
+
+    # Resolve global silence (via QUICKENV_SILENT environment variable or script comment)
+    env_silent = get(ENV, "QUICKENV_SILENT", "false")
+    is_silent = (lowercase(env_silent) == "true") || script_silent
+
+    # Handle forced environment creation or updating
+    if handle_forced_creation(create_env, required_packages, is_silent)
+        return
+    end
+
+    # Handle environment matching or fallback
+    handle_matching_or_fallback(required_packages, fallback_env, excluded_envs, is_silent, script_path)
 end
 
 """
