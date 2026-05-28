@@ -97,6 +97,103 @@ function handle_forced_creation(create_env::String, required_packages::Vector{St
 end
 
 """
+    activate_matched_env(matching, is_silent)
+
+Select and activate the first satisfying non-versioned custom shared named environment.
+If logs are enabled, displays an activation message and prints the silence tip.
+"""
+function activate_matched_env(matching::Vector{String}, is_silent::Bool)
+    # Select the first matching custom environment (excluding standard global ones if any custom exist)
+    selected = something(findfirst(env -> !occursin(r"^v\d+\.\d+$", env), matching), 1)
+    env_name = matching[selected]
+    
+    # Activate the matched environment
+    current_project = Base.active_project()
+    if current_project === nothing || !occursin(env_name, current_project)
+        if !is_silent
+            @info "QuickEnv: Found matching environment @$env_name. Activating..."
+            print_silence_tip(is_silent)
+        end
+        Pkg.activate(env_name, shared=true, io=is_silent ? devnull : stderr)
+    end
+end
+
+"""
+    activate_fallback_env(fallback_env, script_path, is_silent) -> Tuple{String, Bool}
+
+Activate either the requested fallback environment or the script's local directory project.
+Returns a tuple of the display name of the target environment and a boolean indicating if an info log was printed.
+"""
+function activate_fallback_env(fallback_env::String, script_path::String, is_silent::Bool)
+    target_env_display = ""
+    printed_info = false
+    
+    if !isempty(fallback_env)
+        # Use specified named fallback environment
+        if !is_silent
+            @info "QuickEnv: No matching environment found. Activating fallback @$fallback_env..."
+            printed_info = true
+        end
+        Pkg.activate(fallback_env, shared=true, io=is_silent ? devnull : stderr)
+        target_env_display = "@" * fallback_env
+    else
+        # Default: Activate local directory environment
+        script_dir = dirname(script_path)
+        if !is_silent
+            @info "QuickEnv: No matching environment found. Activating local environment at $script_dir..."
+            printed_info = true
+        end
+        Pkg.activate(script_dir, io=is_silent ? devnull : stderr)
+        target_env_display = "local directory environment"
+    end
+    return target_env_display, printed_info
+end
+
+"""
+    bootstrap_packages(required_packages, target_env_display, printed_info, is_silent)
+
+Scan the active environment's dependencies and automatically install missing packages.
+Prevents package installation into standard versioned global scopes as a safety check.
+If no packages were added and logs were printed, shows the silence tip instruction.
+"""
+function bootstrap_packages(required_packages::Vector{String}, target_env_display::String, printed_info::Bool, is_silent::Bool)
+    project_file = Base.active_project()
+    project_file === nothing && return
+
+    # Safety Check: Prevent adding packages to the global environment
+    env_name = basename(dirname(project_file))
+    if occursin(r"^v\d+\.\d+$", env_name)
+        if !is_silent
+            @warn "QuickEnv: Safety check triggered. Blocked installation of packages into the global environment ($env_name)."
+        end
+        return
+    end
+
+    deps = Dict{String, Any}()
+    if isfile(project_file)
+        try
+            project_data = TOML.parsefile(project_file)
+            deps = get(project_data, "deps", Dict{String, Any}())
+        catch
+            # Ignore parsing errors
+        end
+    end
+    
+    missing_pkgs = filter(pkg -> !haskey(deps, pkg), required_packages)
+    if !isempty(missing_pkgs)
+        if !is_silent
+            @info "QuickEnv: Installing missing packages into $target_env_display: $missing_pkgs"
+        end
+        Pkg.add(missing_pkgs, io=is_silent ? devnull : stderr)
+    else
+        # No new packages were added! If we printed any activation logs, show the silent tip.
+        if printed_info && !is_silent
+            print_silence_tip(is_silent)
+        end
+    end
+end
+
+"""
     handle_matching_or_fallback(required_packages, fallback_env, excluded_envs, is_silent, script_path)
 
 Find and activate a satisfying global shared named environment, or execute fallback/auto-bootstrapping
@@ -113,78 +210,11 @@ function handle_matching_or_fallback(required_packages::Vector{String}, fallback
     matching = filter_matching_envs(matching, fallback_env, excluded_envs)
 
     if !isempty(matching)
-        # Select the first matching custom environment (excluding standard global ones if any custom exist)
-        selected = something(findfirst(env -> !occursin(r"^v\d+\.\d+$", env), matching), 1)
-        env_name = matching[selected]
-        
-        # Activate the matched environment
-        current_project = Base.active_project()
-        if current_project === nothing || !occursin(env_name, current_project)
-            if !is_silent
-                @info "QuickEnv: Found matching environment @$env_name. Activating..."
-                print_silence_tip(is_silent)
-            end
-            Pkg.activate(env_name, shared=true, io=is_silent ? devnull : stderr)
-        end
+        activate_matched_env(matching, is_silent)
     else
         # No matching environment found! Apply fallback logic.
-        target_env_display = ""
-        printed_info = false
-        
-        if !isempty(fallback_env)
-            # Use specified named fallback environment
-            if !is_silent
-                @info "QuickEnv: No matching environment found. Activating fallback @$fallback_env..."
-                printed_info = true
-            end
-            Pkg.activate(fallback_env, shared=true, io=is_silent ? devnull : stderr)
-            target_env_display = "@" * fallback_env
-        else
-            # Default: Activate local directory environment
-            script_dir = dirname(script_path)
-            if !is_silent
-                @info "QuickEnv: No matching environment found. Activating local environment at $script_dir..."
-                printed_info = true
-            end
-            Pkg.activate(script_dir, io=is_silent ? devnull : stderr)
-            target_env_display = "local directory environment"
-        end
-
-        # Bootstrap: Automatically install missing packages in the active environment
-        project_file = Base.active_project()
-        if project_file !== nothing
-            # Safety Check: Prevent adding packages to the global environment
-            env_name = basename(dirname(project_file))
-            if occursin(r"^v\d+\.\d+$", env_name)
-                if !is_silent
-                    @warn "QuickEnv: Safety check triggered. Blocked installation of packages into the global environment ($env_name)."
-                end
-                return
-            end
-
-            deps = Dict{String, Any}()
-            if isfile(project_file)
-                try
-                    project_data = TOML.parsefile(project_file)
-                    deps = get(project_data, "deps", Dict{String, Any}())
-                catch
-                    # Ignore parsing errors
-                end
-            end
-            
-            missing_pkgs = filter(pkg -> !haskey(deps, pkg), required_packages)
-            if !isempty(missing_pkgs)
-                if !is_silent
-                    @info "QuickEnv: Installing missing packages into $target_env_display: $missing_pkgs"
-                end
-                Pkg.add(missing_pkgs, io=is_silent ? devnull : stderr)
-            else
-                # No new packages were added! If we printed any activation logs, show the silent tip.
-                if printed_info && !is_silent
-                    print_silence_tip(is_silent)
-                end
-            end
-        end
+        target_env_display, printed_info = activate_fallback_env(fallback_env, script_path, is_silent)
+        bootstrap_packages(required_packages, target_env_display, printed_info, is_silent)
     end
 end
 
