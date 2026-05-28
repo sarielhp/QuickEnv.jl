@@ -4,11 +4,11 @@ using Test
 @testset "QuickEnv.jl Tests" begin
 
     @testset "Script Metadata Parsing" begin
-        # Write a mock Julia script with magic comments
+        # Write a mock Julia script with magic comments (inline)
         mock_script_content = """
         #! /bin/env julial
         
-        using QuickEnv # fallback: plotting_test, exclude: global, outdated_plotting, broken_env, silent
+        using QuickEnv # fallback: plotting_test, exclude: global, outdated_plotting, broken_env, silent, create: data_test
         using Plots
         import DataFrames: DataFrame
         
@@ -24,7 +24,7 @@ using Test
             close(io)
             
             # Parse the metadata
-            pkgs, fallback, excluded, is_silent = QuickEnv.parse_script_metadata(tmp_path)
+            pkgs, fallback, excluded, is_silent, create_env = QuickEnv.parse_script_metadata(tmp_path)
             
             # Verify package extraction
             @test "QuickEnv" in pkgs
@@ -45,9 +45,29 @@ using Test
 
             # Verify silent extraction from inline comment
             @test is_silent == true
+
+            # Verify create extraction from inline comment
+            @test create_env == "data_test"
         finally
             # Clean up the temp file
             rm(tmp_path)
+        end
+
+        # Test Standalone QuickEnv.create parsing
+        mock_script_standalone = """
+        #! /bin/env julial
+        # QuickEnv.create: data_test_standalone
+        using QuickEnv
+        """
+        tmp_path_s, io_s = mktemp()
+        try
+            write(io_s, mock_script_standalone)
+            close(io_s)
+            
+            _, _, _, _, create_env_s = QuickEnv.parse_script_metadata(tmp_path_s)
+            @test create_env_s == "data_test_standalone"
+        finally
+            rm(tmp_path_s)
         end
     end
 

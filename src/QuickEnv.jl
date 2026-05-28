@@ -17,8 +17,8 @@ function __init__()
     # Ensure path is absolute for directory tracking
     script_path = abspath(script_path)
 
-    # 2. Parse script for package imports, fallback, and exclusions
-    required_packages, fallback_env, excluded_envs, script_silent = parse_script_metadata(script_path)
+    # 2. Parse script for package imports, fallback, exclusions, silence, and forced creation
+    required_packages, fallback_env, excluded_envs, script_silent, create_env = parse_script_metadata(script_path)
     
     # Exclude QuickEnv itself from dependency matching
     filter!(p -> p != "QuickEnv", required_packages)
@@ -26,6 +26,59 @@ function __init__()
     # Resolve global silence (via QUICKENV_SILENT environment variable or script comment)
     env_silent = get(ENV, "QUICKENV_SILENT", "false")
     is_silent = (lowercase(env_silent) == "true") || script_silent
+
+    # --- FORCED ENVIRONMENT CREATION / UPDATING LOGIC ---
+    if !isempty(create_env)
+        # Search if environment already exists and contains all required packages
+        env_dir = joinpath(DEPOT_PATH[1], "environments", create_env)
+        toml_path = joinpath(env_dir, "Project.toml")
+        
+        has_all_packages = false
+        missing_pkgs = copy(required_packages)
+        
+        if isfile(toml_path)
+            try
+                project_data = TOML.parsefile(toml_path)
+                deps = get(project_data, "deps", Dict{String, Any}())
+                filter!(pkg -> !haskey(deps, pkg), missing_pkgs)
+                if isempty(missing_pkgs)
+                    has_all_packages = true
+                end
+            catch
+                # Ignore parsing error
+            end
+        end
+        
+        if has_all_packages
+            # Simply activate the existing satisfying environment
+            current_project = Base.active_project()
+            if current_project === nothing || !occursin(create_env, current_project)
+                if !is_silent
+                    @info "QuickEnv: Found existing environment @$create_env with all dependencies. Activating..."
+                end
+                Pkg.activate(create_env, shared=true, io=is_silent ? devnull : stderr)
+            end
+        else
+            # We need to add packages! Disable silent mode.
+            is_silent = false
+            
+            # Print detailed description BEFORE modifying the environment
+            println(stderr, "\n=== QuickEnv: Environment Configuration Required ===")
+            if !isdir(env_dir)
+                println(stderr, "Action: Creating new shared named environment @$create_env.")
+            else
+                println(stderr, "Action: Updating existing shared named environment @$create_env.")
+            end
+            println(stderr, "Reason: Missing required packages: $missing_pkgs")
+            println(stderr, "Triggering automatic package installation...")
+            println(stderr, "====================================================\n")
+            
+            # Activate and bootstrap
+            Pkg.activate(create_env, shared=true, io=stderr)
+            Pkg.add(missing_pkgs, io=stderr)
+        end
+        return
+    end
 
     # 3. Locate all satisfying named environments
     matching = find_matching_envs(required_packages)
@@ -110,11 +163,12 @@ function parse_script_metadata(script_path::String)
     fallback_env = ""
     excluded_envs = String[]
     is_silent = false
+    create_env = ""
     
     if isfile(script_path)
         for line in eachline(script_path)
             # Check for inline options on the QuickEnv import line
-            # e.g., using QuickEnv # fallback: plotting, exclude: global, silent
+            # e.g., using QuickEnv # fallback: plotting, exclude: global, silent, create: data
             parts = split(line, '#')
             if length(parts) > 1
                 comment_part = strip(parts[2])
@@ -131,12 +185,19 @@ function parse_script_metadata(script_path::String)
                         fallback_env = String(m_inline_fallback.captures[1])
                     end
                     
-                    # 3. Parse inline exclude: <comma-separated list>
+                    # 3. Parse inline create: <name>
+                    m_inline_create = match(r"(?i)\bcreate\s*:\s*([a-zA-Z0-9_\-]+)", comment_part)
+                    if m_inline_create !== nothing
+                        create_env = String(m_inline_create.captures[1])
+                    end
+                    
+                    # 4. Parse inline exclude: <comma-separated list>
                     m_inline_exclude = match(r"(?i)\bexclude\s*:\s*([^#;]+)", comment_part)
                     if m_inline_exclude !== nothing
                         raw_excl = m_inline_exclude.captures[1]
                         # Remove other keywords to avoid capturing them if they appear after 'exclude:'
                         raw_excl = replace(raw_excl, r"(?i)\bfallback\s*:\s*[a-zA-Z0-9_\-]+" => "")
+                        raw_excl = replace(raw_excl, r"(?i)\bcreate\s*:\s*[a-zA-Z0-9_\-]+" => "")
                         raw_excl = replace(raw_excl, r"(?i)\bsilent\b" => "")
                         raw_excl = replace(raw_excl, r"(?i)\bquiet\b" => "")
                         
@@ -150,13 +211,13 @@ function parse_script_metadata(script_path::String)
                 end
             end
 
-            # 1. Parse fallback magic comment
+            # 1. Parse standalone fallback magic comment
             m_fallback = match(r"^\s*#\s*quickenv_fallback\s*:\s*([a-zA-Z0-9_\-]+)", line)
             if m_fallback !== nothing
                 fallback_env = String(m_fallback.captures[1])
             end
 
-            # 2. Parse exclude magic comment (comma-separated list of env names or "global")
+            # 2. Parse standalone exclude magic comment (comma-separated list of env names or "global")
             m_exclude = match(r"^\s*#\s*quickenv_exclude\s*:\s*(.*)$", line)
             if m_exclude !== nothing
                 for item in split(m_exclude.captures[1], ',')
@@ -164,13 +225,19 @@ function parse_script_metadata(script_path::String)
                 end
             end
 
-            # 3. Parse silent magic comment (e.g., # quickenv_silent: true)
+            # 3. Parse standalone QuickEnv.create magic comment
+            m_create = match(r"^\s*#\s*(?:QuickEnv\.create|quickenv_create)\s*:\s*([a-zA-Z0-9_\-]+)", line)
+            if m_create !== nothing
+                create_env = String(m_create.captures[1])
+            end
+
+            # 4. Parse standalone silent magic comment (e.g., # quickenv_silent: true)
             m_silent = match(r"^\s*#\s*quickenv_silent\s*:\s*([a-zA-Z0-9_\-]+)", line)
             if m_silent !== nothing
                 is_silent = lowercase(strip(m_silent.captures[1])) == "true"
             end
 
-            # 4. Extract package imports
+            # 5. Extract package imports
             clean_line = strip(first(split(line, '#')))
             m = match(r"^\s*(using|import)\s+(.*)$", clean_line)
             if m !== nothing
@@ -191,7 +258,7 @@ function parse_script_metadata(script_path::String)
             end
         end
     end
-    return packages, fallback_env, excluded_envs, is_silent
+    return packages, fallback_env, excluded_envs, is_silent, create_env
 end
 
 function find_matching_envs(required_pkgs::Vector{String})

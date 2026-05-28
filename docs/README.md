@@ -8,6 +8,7 @@
 
 - **Automated Named Environment Matching**: Scans your running script for `using`/`import` statements and matches them against existing named environments globally (under `~/.julia/environments/`).
 - **Disk-Space & Compile Time Saving**: Reuses globally compiled packages rather than forcing package reinstalls/compilations inside local directories for every quick script.
+- **Forced Environment Management (`QuickEnv.create`)**: Forces `QuickEnv` to use and manage a specific named environment, automatically creating it or adding missing dependencies.
 - **Dynamic Fallbacks**: Supports explicitly declaring a fallback environment to compile inside if no current environments satisfy the script's imports.
 - **Automatic Bootstrapping**: If no matching named environments exist, it creates a local project environment in the script's folder (or fallback named environment) and automatically installs all missing package dependencies using `Pkg.add`.
 - **Exclusion Filters**: Supports custom comments to restrict specific environments or standard global ones from being used.
@@ -32,18 +33,21 @@ Pkg.develop(path="/home/sariel/prog/26/misc/julia_envs/QuickEnv")
 You can configure `QuickEnv` directly inside the comments of your Julia script. These comments are completely ignored by the standard Julia parser, making them 100% syntactically safe and standard.
 
 ### 1. Compact Inline Format (Recommended)
-You can declare fallback named environments, exclusions, and quiet flags all on the same line as your import:
+You can declare fallback named environments, exclusions, quiet flags, and forced environment creation all on the same line as your import:
 
 ```julia
-using QuickEnv # fallback: plotting, exclude: global, silent
+using QuickEnv # fallback: plotting, exclude: global, silent, create: data
 ```
 
 ### 2. Standalone Multiline Format
 You can also declare these options on individual lines before the package loads:
 
+- **Forced environment**: `# QuickEnv.create: data`
 - **Fallback target**: `# quickenv_fallback: plotting`
 - **Exclusions**: `# quickenv_exclude: global, broken_plotting`
 - **Silent Mode**: `# quickenv_silent: true`
+
+*Note on `QuickEnv.create` behavior: If the target environment already satisfies all dependencies, it runs silently (if requested). If any packages are missing and need to be installed, silent mode is temporarily disabled, and a detailed description of what is going on is printed before `Pkg` modifies the environment.*
 
 ---
 
