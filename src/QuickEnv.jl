@@ -113,14 +113,40 @@ function parse_script_metadata(script_path::String)
     
     if isfile(script_path)
         for line in eachline(script_path)
-            # Check for inline silence comment on the QuickEnv import line
-            # e.g., using QuickEnv # Silent
+            # Check for inline options on the QuickEnv import line
+            # e.g., using QuickEnv # fallback: plotting, exclude: global, silent
             parts = split(line, '#')
             if length(parts) > 1
                 comment_part = strip(parts[2])
                 clean_line = strip(parts[1])
-                if occursin(r"(?i)silent", comment_part) && occursin(r"\bQuickEnv\b", clean_line)
-                    is_silent = true
+                if occursin(r"\bQuickEnv\b", clean_line)
+                    # 1. Parse inline silent/quiet flags
+                    if occursin(r"(?i)\bsilent\b", comment_part) || occursin(r"(?i)\bquiet\b", comment_part)
+                        is_silent = true
+                    end
+                    
+                    # 2. Parse inline fallback: <name>
+                    m_inline_fallback = match(r"(?i)\bfallback\s*:\s*([a-zA-Z0-9_\-]+)", comment_part)
+                    if m_inline_fallback !== nothing
+                        fallback_env = String(m_inline_fallback.captures[1])
+                    end
+                    
+                    # 3. Parse inline exclude: <comma-separated list>
+                    m_inline_exclude = match(r"(?i)\bexclude\s*:\s*([^#;]+)", comment_part)
+                    if m_inline_exclude !== nothing
+                        raw_excl = m_inline_exclude.captures[1]
+                        # Remove other keywords to avoid capturing them if they appear after 'exclude:'
+                        raw_excl = replace(raw_excl, r"(?i)\bfallback\s*:\s*[a-zA-Z0-9_\-]+" => "")
+                        raw_excl = replace(raw_excl, r"(?i)\bsilent\b" => "")
+                        raw_excl = replace(raw_excl, r"(?i)\bquiet\b" => "")
+                        
+                        for item in split(raw_excl, ',')
+                            clean_item = strip(item)
+                            if !isempty(clean_item)
+                                push!(excluded_envs, String(clean_item))
+                            end
+                        end
+                    end
                 end
             end
 

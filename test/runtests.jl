@@ -7,10 +7,8 @@ using Test
         # Write a mock Julia script with magic comments
         mock_script_content = """
         #! /bin/env julial
-        # quickenv_fallback: plotting_test
-        # quickenv_exclude: global, outdated_plotting, broken_env
         
-        using QuickEnv # Silent
+        using QuickEnv # fallback: plotting_test, exclude: global, outdated_plotting, broken_env, silent
         using Plots
         import DataFrames: DataFrame
         
