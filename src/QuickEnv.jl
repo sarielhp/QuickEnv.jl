@@ -56,6 +56,7 @@ function handle_forced_creation(create_env::String, required_packages::Vector{St
         if current_project === nothing || !occursin(create_env, current_project)
             if !is_silent
                 @info "QuickEnv: Found existing environment @$create_env with all dependencies. Activating..."
+                @info "QuickEnv: Tip: To run silently, add '# silent' to 'using QuickEnv', set '# quickenv_silent: true', or set QUICKENV_SILENT=true."
             end
             Pkg.activate(create_env, shared=true, io=is_silent ? devnull : stderr)
         end
@@ -107,17 +108,20 @@ function handle_matching_or_fallback(required_packages::Vector{String}, fallback
         if current_project === nothing || !occursin(env_name, current_project)
             if !is_silent
                 @info "QuickEnv: Found matching environment @$env_name. Activating..."
+                @info "QuickEnv: Tip: To run silently, add '# silent' to 'using QuickEnv', set '# quickenv_silent: true', or set QUICKENV_SILENT=true."
             end
             Pkg.activate(env_name, shared=true, io=is_silent ? devnull : stderr)
         end
     else
         # No matching environment found! Apply fallback logic.
         target_env_display = ""
+        printed_info = false
         
         if !isempty(fallback_env)
             # Use specified named fallback environment
             if !is_silent
                 @info "QuickEnv: No matching environment found. Activating fallback @$fallback_env..."
+                printed_info = true
             end
             Pkg.activate(fallback_env, shared=true, io=is_silent ? devnull : stderr)
             target_env_display = "@" * fallback_env
@@ -126,6 +130,7 @@ function handle_matching_or_fallback(required_packages::Vector{String}, fallback
             script_dir = dirname(script_path)
             if !is_silent
                 @info "QuickEnv: No matching environment found. Activating local environment at $script_dir..."
+                printed_info = true
             end
             Pkg.activate(script_dir, io=is_silent ? devnull : stderr)
             target_env_display = "local directory environment"
@@ -159,6 +164,11 @@ function handle_matching_or_fallback(required_packages::Vector{String}, fallback
                     @info "QuickEnv: Installing missing packages into $target_env_display: $missing_pkgs"
                 end
                 Pkg.add(missing_pkgs, io=is_silent ? devnull : stderr)
+            else
+                # No new packages were added! If we printed any activation logs, show the silent tip.
+                if printed_info && !is_silent
+                    @info "QuickEnv: Tip: To run silently, add '# silent' to 'using QuickEnv', set '# quickenv_silent: true', or set QUICKENV_SILENT=true."
+                end
             end
         end
     end
