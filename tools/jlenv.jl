@@ -88,7 +88,7 @@ end
 # Update or insert the description key in a Project.toml file
 function update_description(file_path::String, new_desc::String)
     mkpath(dirname(file_path))
-    lines = isfile(file_path) ? readlines(file_path, keep=true) : String[]
+    lines = isfile(file_path) ? readlines(file_path; keep=true) : String[]
     description_replaced = false
 
     updated_lines = String[]
@@ -112,7 +112,7 @@ end
 function list_environments()
     if !isdir(ENV_DIR)
         println(stderr, red("No Julia environments directory found at $ENV_DIR."))
-        return
+        return nothing
     end
 
     envs = filter(entry -> isdir(joinpath(ENV_DIR, entry)), readdir(ENV_DIR))
@@ -142,7 +142,7 @@ function show_environment(env_name::String)
 
     if !isfile(toml_path)
         println(stderr, red("Error: Named environment '@$clean_name' does not exist."))
-        return
+        return nothing
     end
 
     data = parse_project_toml(toml_path)
@@ -168,15 +168,17 @@ end
 function add_packages(env_name::String, packages::Vector{String})
     if isempty(packages)
         println(stderr, red("Error: Please specify at least one package to add."))
-        return
+        return nothing
     end
 
     clean_name = startswith(env_name, '@') ? env_name[2:end] : env_name
-    println("Adding package(s) $(green(join(packages, ", "))) to '$(green("@" * clean_name))'...")
+    println(
+        "Adding package(s) $(green(join(packages, ", "))) to '$(green("@" * clean_name))'...",
+    )
 
     pkg_array = join(map(p -> "\"$p\"", packages), ", ")
     cmd = `julia --project=@$clean_name -e "using Pkg; Pkg.add([$pkg_array])"`
-    
+
     try
         if success(cmd)
             println(bold(green("\nSuccessfully added package(s) to '@$clean_name'!")))
@@ -204,15 +206,17 @@ function create_from_script(env_name::String, script_path::String)
 
     if !isfile(script_path)
         println(stderr, red("Error: Script file not found: $script_path"))
-        return
+        return nothing
     end
 
     println("Scanning script $(yellow(script_path)) for imports...")
     packages = extract_packages(script_path)
 
     if isempty(packages)
-        println(yellow("No external packages detected in script. Environment was not created."))
-        return
+        println(
+            yellow("No external packages detected in script. Environment was not created.")
+        )
+        return nothing
     end
 
     println("Detected packages: $(green(join(packages, ", ")))")
@@ -229,7 +233,7 @@ end
 function find_matching_environments(script_path::String)
     if !isfile(script_path)
         println(stderr, red("Error: Script file not found: $script_path"))
-        return
+        return nothing
     end
 
     println("Scanning script $(yellow(script_path)) for imports...")
@@ -237,14 +241,14 @@ function find_matching_environments(script_path::String)
 
     if isempty(required_packages)
         println(yellow("No external packages detected in: $script_path"))
-        return
+        return nothing
     end
 
     println("Required packages: $(green(join(required_packages, ", ")))")
 
     if !isdir(ENV_DIR)
         println(stderr, red("No Julia environments directory found at $ENV_DIR."))
-        return
+        return nothing
     end
 
     envs = filter(entry -> isdir(joinpath(ENV_DIR, entry)), readdir(ENV_DIR))
@@ -283,14 +287,14 @@ end
 function match_and_run(script_path::String, args::Vector{String})
     if !isfile(script_path)
         println(stderr, red("Error: Script file not found: $script_path"))
-        return
+        return nothing
     end
 
     required_packages = extract_packages(script_path)
 
     if !isdir(ENV_DIR)
         println(stderr, red("Error: No Julia environments directory found at $ENV_DIR."))
-        return
+        return nothing
     end
 
     envs = filter(entry -> isdir(joinpath(ENV_DIR, entry)), readdir(ENV_DIR))
@@ -312,13 +316,18 @@ function match_and_run(script_path::String, args::Vector{String})
     end
 
     if isempty(matching_envs)
-        println(stderr, red("Error: No existing environment satisfies all required dependencies for $script_path."))
+        println(
+            stderr,
+            red(
+                "Error: No existing environment satisfies all required dependencies for $script_path.",
+            ),
+        )
         if !isempty(required_packages)
             println("Required packages: $(green(join(required_packages, ", ")))")
         end
         println(gray("Tip: You can create a new environment for this script by running:"))
         println(gray("     jlenv create @new_env_name $script_path"))
-        return
+        return nothing
     end
 
     # Prefer user named environments (not matching 'vX.Y')
@@ -354,7 +363,7 @@ function run_script(env_name::String, script_path::String, args::Vector{String})
     clean_name = startswith(env_name, '@') ? env_name[2:end] : env_name
     if !isfile(script_path)
         println(stderr, red("Error: Script file not found: $script_path"))
-        return
+        return nothing
     end
 
     cmd = `julia --project=@$clean_name $script_path $args`
@@ -373,7 +382,9 @@ end
 # Launch Julia REPL inside a specified named environment
 function launch_repl(env_name::String)
     clean_name = startswith(env_name, '@') ? env_name[2:end] : env_name
-    println(bold("Launching Julia REPL in named environment '$(green("@" * clean_name))'..."))
+    println(
+        bold("Launching Julia REPL in named environment '$(green("@" * clean_name))'...")
+    )
 
     cmd = `julia --project=@$clean_name`
     try
@@ -395,14 +406,20 @@ function remove_environment(env_name::String)
 
     if !isdir(env_path)
         println(stderr, red("Error: Named environment '@$clean_name' does not exist."))
-        return
+        return nothing
     end
 
-    print(bold(red("Are you sure you want to delete named environment $(green("@" * clean_name))? [y/N]: ")))
+    print(
+        bold(
+            red(
+                "Are you sure you want to delete named environment $(green("@" * clean_name))? [y/N]: ",
+            ),
+        ),
+    )
     response = strip(lowercase(readline()))
 
     if response in ("y", "yes")
-        rm(env_path, recursive=true, force=true)
+        rm(env_path; recursive=true, force=true)
         println(bold(green("Successfully deleted environment '@$clean_name'.")))
     else
         println(yellow("Deletion cancelled."))
@@ -413,7 +430,7 @@ end
 function search_packages(query::String)
     if isempty(query)
         println(stderr, red("Error: Please specify a search query."))
-        return
+        return nothing
     end
 
     println("Searching Julia registry for '$(yellow(query))'...")
@@ -421,7 +438,7 @@ function search_packages(query::String)
     matching_pkgs = String[]
     try
         for reg in Pkg.Registry.reachable_registries()
-            pkgs = sort(collect(values(reg.pkgs)), by = x -> x.name)
+            pkgs = sort(collect(values(reg.pkgs)); by=x -> x.name)
             for pkg in pkgs
                 if occursin(lowercase(query), lowercase(pkg.name))
                     push!(matching_pkgs, pkg.name)
@@ -430,7 +447,7 @@ function search_packages(query::String)
         end
     catch e
         println(stderr, red("Error searching registry: $e"))
-        return
+        return nothing
     end
 
     unique!(matching_pkgs)
@@ -461,104 +478,122 @@ end
 function print_command_help(cmd::AbstractString)
     cmd_clean = lowercase(strip(cmd))
     if cmd_clean == "list"
-        println("""
-        $(bold(cyan("Command:"))) list
-        $(bold(yellow("Description:"))) List all named environments and their custom descriptions.
+        println(
+            """
+    $(bold(cyan("Command:"))) list
+    $(bold(yellow("Description:"))) List all named environments and their custom descriptions.
 
-        $(bold(yellow("Usage:")))
-          jlenv list
+    $(bold(yellow("Usage:")))
+      jlenv list
 
-        $(bold(yellow("Example:")))
-          jlenv list
-        """)
+    $(bold(yellow("Example:")))
+      jlenv list
+    """,
+        )
     elseif cmd_clean == "show"
-        println("""
-        $(bold(cyan("Command:"))) show
-        $(bold(yellow("Description:"))) Show registered packages (direct dependencies) in a named environment.
+        println(
+            """
+    $(bold(cyan("Command:"))) show
+    $(bold(yellow("Description:"))) Show registered packages (direct dependencies) in a named environment.
 
-        $(bold(yellow("Usage:")))
-          jlenv show <env_name>
+    $(bold(yellow("Usage:")))
+      jlenv show <env_name>
 
-        $(bold(yellow("Example:")))
-          jlenv show @plotting
-        """)
+    $(bold(yellow("Example:")))
+      jlenv show @plotting
+    """,
+        )
     elseif cmd_clean == "add"
-        println("""
-        $(bold(cyan("Command:"))) add
-        $(bold(yellow("Description:"))) Add one or more package dependencies to a named environment.
+        println(
+            """
+    $(bold(cyan("Command:"))) add
+    $(bold(yellow("Description:"))) Add one or more package dependencies to a named environment.
 
-        $(bold(yellow("Usage:")))
-          jlenv add <env_name> <pkg1> [pkg2 ...]
+    $(bold(yellow("Usage:")))
+      jlenv add <env_name> <pkg1> [pkg2 ...]
 
-        $(bold(yellow("Example:")))
-          jlenv add @plotting DataStructures DataFrames
-        """)
+    $(bold(yellow("Example:")))
+      jlenv add @plotting DataStructures DataFrames
+    """,
+        )
     elseif cmd_clean == "describe"
-        println("""
-        $(bold(cyan("Command:"))) describe
-        $(bold(yellow("Description:"))) Add or update a custom description for a named environment.
+        println(
+            """
+    $(bold(cyan("Command:"))) describe
+    $(bold(yellow("Description:"))) Add or update a custom description for a named environment.
 
-        $(bold(yellow("Usage:")))
-          jlenv describe <env_name> "<description>"
+    $(bold(yellow("Usage:")))
+      jlenv describe <env_name> "<description>"
 
-        $(bold(yellow("Example:")))
-          jlenv describe @plotting "Plotting environment with Plots.jl and Cairo"
-        """)
+    $(bold(yellow("Example:")))
+      jlenv describe @plotting "Plotting environment with Plots.jl and Cairo"
+    """,
+        )
     elseif cmd_clean == "create"
-        println("""
-        $(bold(cyan("Command:"))) create
-        $(bold(yellow("Description:"))) Scan a Julia script for imported packages, create a new named environment, and automatically add all dependencies.
+        println(
+            """
+    $(bold(cyan("Command:"))) create
+    $(bold(yellow("Description:"))) Scan a Julia script for imported packages, create a new named environment, and automatically add all dependencies.
 
-        $(bold(yellow("Usage:")))
-          jlenv create <env_name> <script.jl>
+    $(bold(yellow("Usage:")))
+      jlenv create <env_name> <script.jl>
 
-        $(bold(yellow("Example:")))
-          jlenv create @math_env solve_inequality.jl
-        """)
+    $(bold(yellow("Example:")))
+      jlenv create @math_env solve_inequality.jl
+    """,
+        )
     elseif cmd_clean == "match"
-        println("""
-        $(bold(cyan("Command:"))) match
-        $(bold(yellow("Description:"))) Find all existing named environments that satisfy all package imports in a Julia script.
+        println(
+            """
+    $(bold(cyan("Command:"))) match
+    $(bold(yellow("Description:"))) Find all existing named environments that satisfy all package imports in a Julia script.
 
-        $(bold(yellow("Usage:")))
-          jlenv match <script.jl>
+    $(bold(yellow("Usage:")))
+      jlenv match <script.jl>
 
-        $(bold(yellow("Example:")))
-          jlenv match plot_inequality.jl
-        """)
+    $(bold(yellow("Example:")))
+      jlenv match plot_inequality.jl
+    """,
+        )
     elseif cmd_clean == "mrun"
-        println("""
-        $(bold(cyan("Command:"))) mrun
-        $(bold(yellow("Description:"))) Run a Julia script in a matching named environment (automatically selected).
+        println(
+            """
+    $(bold(cyan("Command:"))) mrun
+    $(bold(yellow("Description:"))) Run a Julia script in a matching named environment (automatically selected).
 
-        $(bold(yellow("Usage:")))
-          jlenv mrun <script.jl> [args...]
+    $(bold(yellow("Usage:")))
+      jlenv mrun <script.jl> [args...]
 
-        $(bold(yellow("Example:")))
-          jlenv mrun plot_inequality.jl
-        """)
+    $(bold(yellow("Example:")))
+      jlenv mrun plot_inequality.jl
+    """,
+        )
     elseif cmd_clean == "run"
-        println("""
-        $(bold(cyan("Command:"))) run
-        $(bold(yellow("Description:"))) Run a Julia script inside a specified named environment.
+        println(
+            """
+    $(bold(cyan("Command:"))) run
+    $(bold(yellow("Description:"))) Run a Julia script inside a specified named environment.
 
-        $(bold(yellow("Usage:")))
-          jlenv run <env_name> <script.jl> [args...]
+    $(bold(yellow("Usage:")))
+      jlenv run <env_name> <script.jl> [args...]
 
-        $(bold(yellow("Example:")))
-          jlenv run @plotting plot_inequality.jl
-        """)
+    $(bold(yellow("Example:")))
+      jlenv run @plotting plot_inequality.jl
+    """
+        )
     elseif cmd_clean == "repl"
-        println("""
-        $(bold(cyan("Command:"))) repl
-        $(bold(yellow("Description:"))) Launch Julia REPL inside a specified named environment.
+        println(
+            """
+    $(bold(cyan("Command:"))) repl
+    $(bold(yellow("Description:"))) Launch Julia REPL inside a specified named environment.
 
-        $(bold(yellow("Usage:")))
-          jlenv repl <env_name>
+    $(bold(yellow("Usage:")))
+      jlenv repl <env_name>
 
-        $(bold(yellow("Example:")))
-          jlenv repl @plotting
-        """)
+    $(bold(yellow("Example:")))
+      jlenv repl @plotting
+    """
+        )
     elseif cmd_clean in ("rm", "delete")
         println("""
         $(bold(cyan("Command:"))) rm
@@ -571,16 +606,18 @@ function print_command_help(cmd::AbstractString)
           jlenv rm @test_env
         """)
     elseif cmd_clean == "search"
-        println("""
-        $(bold(cyan("Command:"))) search
-        $(bold(yellow("Description:"))) Search the official Julia General Registry for a package by query.
+        println(
+            """
+    $(bold(cyan("Command:"))) search
+    $(bold(yellow("Description:"))) Search the official Julia General Registry for a package by query.
 
-        $(bold(yellow("Usage:")))
-          jlenv search <query>
+    $(bold(yellow("Usage:")))
+      jlenv search <query>
 
-        $(bold(yellow("Example:")))
-          jlenv search DataStructures
-        """)
+    $(bold(yellow("Example:")))
+      jlenv search DataStructures
+    """,
+        )
     else
         println(stderr, red("Error: Unknown command '$cmd'"))
         print_help()
@@ -589,26 +626,28 @@ end
 
 # Display global usage instructions
 function print_help()
-    println("""
-    $(bold(cyan("jlenv"))) - Manage Julia Named Environments
+    println(
+        """
+$(bold(cyan("jlenv"))) - Manage Julia Named Environments
 
-    $(bold(yellow("Usage:"))) jlenv <command> [arguments...]
+$(bold(yellow("Usage:"))) jlenv <command> [arguments...]
 
-    $(bold(yellow("Commands:")))
-      list                            List all environments and descriptions
-      show <env_name>                 Show registered packages in an environment
-      add <env_name> <pkg1> <pkg2>..  Add packages to a named environment
-      describe <env_name> "<desc>"    Add/change description of an environment
-      create <env_name> <script.jl>   Create an environment from a Julia script
-      match <script.jl>               Find environments that can run a script
-      mrun <script.jl> [args...]      Run a Julia script in a matching named env
-      run <env_name> <script.jl> [..] Run a Julia script in a named environment
-      repl <env_name>                 Launch Julia REPL in a named environment
-      rm <env_name>                   Delete a named environment
-      search <query>                  Search General Registry for a package
+$(bold(yellow("Commands:")))
+  list                            List all environments and descriptions
+  show <env_name>                 Show registered packages in an environment
+  add <env_name> <pkg1> <pkg2>..  Add packages to a named environment
+  describe <env_name> "<desc>"    Add/change description of an environment
+  create <env_name> <script.jl>   Create an environment from a Julia script
+  match <script.jl>               Find environments that can run a script
+  mrun <script.jl> [args...]      Run a Julia script in a matching named env
+  run <env_name> <script.jl> [..] Run a Julia script in a named environment
+  repl <env_name>                 Launch Julia REPL in a named environment
+  rm <env_name>                   Delete a named environment
+  search <query>                  Search General Registry for a package
 
-    $(bold(gray("Tip: Run 'jlenv help <command>' or call a command without arguments to view its detailed usage and examples.")))
-    """)
+$(bold(gray("Tip: Run 'jlenv help <command>' or call a command without arguments to view its detailed usage and examples.")))
+""",
+    )
 end
 
 # Main entry point parsing arguments

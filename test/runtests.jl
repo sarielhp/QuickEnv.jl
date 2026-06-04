@@ -135,7 +135,9 @@ using Test
             write(io_f, mock_script_fallback_with_desc)
             close(io_f)
 
-            _, fallback_env_f, _, _, _, description_f = QuickEnv.parse_script_metadata(tmp_path_f)
+            _, fallback_env_f, _, _, _, description_f = QuickEnv.parse_script_metadata(
+                tmp_path_f
+            )
             @test fallback_env_f == "plotting_test"
             @test description_f == "Fallback desc test"
         finally
@@ -153,7 +155,9 @@ using Test
             write(io_c, mock_script_create_with_desc)
             close(io_c)
 
-            _, _, _, _, create_env_c, description_c = QuickEnv.parse_script_metadata(tmp_path_c)
+            _, _, _, _, create_env_c, description_c = QuickEnv.parse_script_metadata(
+                tmp_path_c
+            )
             @test create_env_c == "data_test"
             @test description_c == "Create desc test"
         finally
@@ -225,10 +229,12 @@ using Test
             script_path = joinpath(tmp_dir, "script.jl")
             local_proj = joinpath(tmp_dir, "Project.toml")
             touch(local_proj)
-            
+
             # 1. Non-silent mode: should emit a warning log and an info log
             QuickEnv.tip_printed[] = false
-            @test_logs (:warn, r"QuickEnv: Local Project.toml or Manifest.toml exists.*") (:info, r"QuickEnv - To silence add magic comment.*") begin
+            @test_logs (:warn, r"QuickEnv: Local Project.toml or Manifest.toml exists.*") (
+                :info, r"QuickEnv - To silence add magic comment.*"
+            ) begin
                 QuickEnv.warn_ignored_local_files(script_path, "plotting_test", false)
             end
 

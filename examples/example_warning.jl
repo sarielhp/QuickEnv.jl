@@ -16,23 +16,29 @@ function (@main)(args)
     # If the dummy local Project.toml doesn't exist, create it and ask the user to run again.
     if !isfile(local_project)
         println("=== QuickEnv Ignored Files Warning Demo ===")
-        println("1. A dummy local Project.toml is being created in the examples/ directory.")
-        
+        println(
+            "1. A dummy local Project.toml is being created in the examples/ directory."
+        )
+
         # Write dummy TOML content
         write(local_project, "name = \"DummyExamplesProject\"\nversion = \"0.1.0\"\n")
         println(local_project)
-        
+
         println("\n2. Run this script a second time to see the warning in action:")
         println("   julia examples/example_warning.jl")
         println()
         println("To clean up later, simply delete: examples/Project.toml")
     else
         println("=== QuickEnv Ignored Files Warning Demo ===")
-        println("Success! The warning was successfully printed above because a local Project.toml")
-        println("exists in this folder, but the script is running in named environment @plotting.")
+        println(
+            "Success! The warning was successfully printed above because a local Project.toml",
+        )
+        println(
+            "exists in this folder, but the script is running in named environment @plotting.",
+        )
         println()
         println("Cleaning up the dummy local Project.toml now...")
-        rm(local_project, force=true)
+        rm(local_project; force=true)
         println("Cleanup complete!")
     end
 

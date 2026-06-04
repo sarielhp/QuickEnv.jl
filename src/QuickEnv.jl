@@ -14,8 +14,7 @@ ensuring it is shown at most once.
 function print_silence_tip(is_silent::Bool)
     if !is_silent && !tip_printed[]
         println(stderr)
-        @info "QuickEnv - To silence add magic comment:\n" *
-              "'using QuickEnv  # silent'"
+        @info "QuickEnv - To silence add magic comment:\n" * "'using QuickEnv  # silent'"
         println(stderr)
         tip_printed[] = true
     end
@@ -82,7 +81,7 @@ function handle_forced_creation(
             if !is_silent
                 println(stderr)
                 @info "QuickEnv: Found existing environment @$create_env\n" *
-                      "with all dependencies. Activating..."
+                    "with all dependencies. Activating..."
                 println(stderr)
                 print_silence_tip(is_silent)
             end
@@ -131,8 +130,7 @@ function activate_matched_env(matching::Vector{String}, is_silent::Bool)
     if current_project === nothing || !occursin(env_name, current_project)
         if !is_silent
             println(stderr)
-            @info "QuickEnv: Found matching environment @$env_name.\n" *
-                  "Activating..."
+            @info "QuickEnv: Found matching environment @$env_name.\n" * "Activating..."
             println(stderr)
             print_silence_tip(is_silent)
         end
@@ -156,7 +154,7 @@ function activate_fallback_env(fallback_env::String, script_path::String, is_sil
         if printed_info
             println(stderr)
             @info "QuickEnv: No matching environment found.\n" *
-                  "Activating fallback @$fallback_env..."
+                "Activating fallback @$fallback_env..."
             println(stderr)
         end
         Pkg.activate(fallback_env; shared=true, io=is_silent ? devnull : stderr)
@@ -169,7 +167,7 @@ function activate_fallback_env(fallback_env::String, script_path::String, is_sil
     if printed_info
         println(stderr)
         @info "QuickEnv: No matching environment found.\n" *
-              "Activating local environment at $script_dir..."
+            "Activating local environment at $script_dir..."
         println(stderr)
     end
     Pkg.activate(script_dir; io=is_silent ? devnull : stderr)
@@ -222,7 +220,7 @@ function bootstrap_packages(
         if !is_silent
             println(stderr)
             @info "QuickEnv: Installing missing packages into\n" *
-                  "$target_env_display: $missing_pkgs"
+                "$target_env_display: $missing_pkgs"
             println(stderr)
         end
         Pkg.add(missing_pkgs; io=is_silent ? devnull : stderr)
@@ -281,7 +279,7 @@ Update or insert the description key in a Project.toml file.
 """
 function update_description(file_path::String, new_desc::String)
     mkpath(dirname(file_path))
-    lines = isfile(file_path) ? readlines(file_path, keep=true) : String[]
+    lines = isfile(file_path) ? readlines(file_path; keep=true) : String[]
     description_replaced = false
 
     updated_lines = String[]
@@ -337,8 +335,8 @@ function warn_ignored_local_files(script_path::String, env_name::String, is_sile
     if isfile(local_project) || isfile(local_manifest)
         println(stderr)
         @warn "QuickEnv: Local Project.toml or Manifest.toml exists in the\n" *
-              "script's directory, but is being ignored because named\n" *
-              "environment @$env_name is activated."
+            "script's directory, but is being ignored because named\n" *
+            "environment @$env_name is activated."
         println(stderr)
         print_silence_tip(is_silent)
     end
@@ -386,7 +384,8 @@ function __init__()
     project_file = Base.active_project()
     if project_file !== nothing
         active_dir = dirname(project_file)
-        if active_dir != dirname(script_path) && !occursin(r"^v\d+\.\d+$", basename(active_dir))
+        if active_dir != dirname(script_path) &&
+            !occursin(r"^v\d+\.\d+$", basename(active_dir))
             warn_ignored_local_files(script_path, basename(active_dir), is_silent)
         end
     end
@@ -440,7 +439,9 @@ function parse_inline_options(line::String)
     end
 
     # 4. Parse inline description
-    m_inline_desc = match(r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", comment_part)
+    m_inline_desc = match(
+        r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", comment_part
+    )
     if m_inline_desc !== nothing
         raw_desc = nothing
         for cap in m_inline_desc.captures
@@ -462,7 +463,10 @@ function parse_inline_options(line::String)
         # appear after 'exclude:'
         raw_excl = replace(raw_excl, r"(?i)\bfallback\s*:\s*[a-zA-Z0-9_\-]+" => "")
         raw_excl = replace(raw_excl, r"(?i)\bcreate\s*:\s*[a-zA-Z0-9_\-]+" => "")
-        raw_excl = replace(raw_excl, r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))" => "")
+        raw_excl = replace(
+            raw_excl,
+            r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))" => "",
+        )
         raw_excl = replace(raw_excl, r"(?i)\bsilent\b" => "")
 
         for item in split(raw_excl, ',')
@@ -499,7 +503,9 @@ function parse_standalone_comments(line::String)
         if m_name !== nothing
             fallback_env = String(m_name.captures[1])
         end
-        m_inline_desc = match(r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", content)
+        m_inline_desc = match(
+            r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", content
+        )
         if m_inline_desc !== nothing
             raw_desc = nothing
             for cap in m_inline_desc.captures
@@ -524,16 +530,16 @@ function parse_standalone_comments(line::String)
     end
 
     # 3. Parse standalone QuickEnv.create magic comment
-    m_create = match(
-        r"^\s*#\s*(?:QuickEnv\.create|quickenv_create)\s*:\s*(.*)$", line
-    )
+    m_create = match(r"^\s*#\s*(?:QuickEnv\.create|quickenv_create)\s*:\s*(.*)$", line)
     if m_create !== nothing
         content = m_create.captures[1]
         m_name = match(r"^\s*([a-zA-Z0-9_\-]+)", content)
         if m_name !== nothing
             create_env = String(m_name.captures[1])
         end
-        m_inline_desc = match(r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", content)
+        m_inline_desc = match(
+            r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", content
+        )
         if m_inline_desc !== nothing
             raw_desc = nothing
             for cap in m_inline_desc.captures
@@ -549,7 +555,10 @@ function parse_standalone_comments(line::String)
     end
 
     # 4. Parse standalone description magic comment
-    m_desc = match(r"^\s*#\s*(?:QuickEnv\.desc(?:ription)?|quickenv_desc(?:ription)?)\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|(.*))$", line)
+    m_desc = match(
+        r"^\s*#\s*(?:QuickEnv\.desc(?:ription)?|quickenv_desc(?:ription)?)\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|(.*))$",
+        line,
+    )
     if m_desc !== nothing
         raw_desc = nothing
         for cap in m_desc.captures
@@ -643,7 +652,9 @@ function parse_script_metadata(script_path::String)
         end
 
         # 2. Parse standalone magic comments
-        sa_fallback, sa_excl, sa_silent, sa_create, sa_desc = parse_standalone_comments(line)
+        sa_fallback, sa_excl, sa_silent, sa_create, sa_desc = parse_standalone_comments(
+            line
+        )
         if !isempty(sa_fallback)
             fallback_env = sa_fallback
         end

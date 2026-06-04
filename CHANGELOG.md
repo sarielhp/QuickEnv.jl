@@ -2,6 +2,15 @@
 
 All notable changes to the `QuickEnv` package will be documented in this file.
 
+## [0.2.0] - 2026-06-04
+
+### Added
+- Supported custom named environment descriptions via inline keyword option `desc` / `description` and standalone comments `# QuickEnv.desc:` / `# QuickEnv.description:`.
+- Added warning logs when local `Project.toml` or `Manifest.toml` files are being bypassed by an active named/fallback environment.
+- Added standard vertical padding to info and warning prints to improve log visibility on `stderr`.
+- Added interactive script `examples/example_warning.jl` to demonstrate local ignored files warnings.
+- Added tests for warning logs, metadata parsing, and `Project.toml` description writing.
+
 ## [0.1.0] - 2026-05-28
 
 ### Added
