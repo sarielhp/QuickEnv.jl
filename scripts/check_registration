@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# check_registration - Check the status of the QuickEnv package registration PR.
+
+set -euo pipefail
+
+DEFAULT_PR=157122
+PR_NUM="${1:-$DEFAULT_PR}"
+
+# Ensure gh CLI is installed
+if ! command -v gh &> /dev/null; then
+    echo "Error: GitHub CLI (gh) is not installed. Please install it to use this script." >&2
+    exit 1
+fi
+
+echo "=== Pull Request Status (JuliaRegistries/General/pull/$PR_NUM) ==="
+if ! pr_info=$(gh api "repos/JuliaRegistries/General/pulls/$PR_NUM" --template 'Title: {{.title}}\nState: {{.state}}\nURL:   {{.html_url}}\n' 2>/dev/null); then
+    echo "Error: Failed to fetch PR #$PR_NUM from JuliaRegistries/General. It might not exist." >&2
+    exit 1
+fi
+echo -e "$pr_info"
+
+echo "=== Pull Request Checks ==="
+# We ignore the exit code of gh pr checks since it returns non-zero if some checks are pending/failing
+gh pr checks "$PR_NUM" -R JuliaRegistries/General || true
