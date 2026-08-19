@@ -28,17 +28,21 @@ FileUtils.rm_f(File.join(SOUP_DIR, "Project.toml"))
 FileUtils.rm_f(File.join(SOUP_DIR, "Manifest.toml"))
 
 # 2. Find all scripts and parse their package imports
-scripts = Dir.glob(File.join(SOUP_DIR, "*.jl")).sort
+scripts = Dir.glob(File.join(SOUP_DIR, "[0-9]*.jl")).sort
 if scripts.empty?
   puts "No scripts found in #{SOUP_DIR}!"
   exit 1
 end
 
 script_packages = {}
-scripts.each do |script|
-  bname = File.basename(script)
+def extract_packages_recursive(file_path, visited=Set.new)
+  return [] unless File.file?(file_path)
+  return [] if visited.include?(file_path)
+  visited.add(file_path)
   pkgs = []
-  File.readlines(script).each do |line|
+  dir = File.dirname(file_path)
+
+  File.readlines(file_path).each do |line|
     clean = line.split("#").first.to_s.strip
     if clean =~ /^\s*(using|import)\s+(.*)$/
       raw_imports = $2.split(":").first
@@ -46,9 +50,17 @@ scripts.each do |script|
         p = part.strip.split.first
         pkgs << p if p && !p.empty? && p != "QuickEnv"
       end
+    elsif clean =~ /\binclude\s*\(\s*["']([^"']+)["']\s*\)/
+      inc_file = File.expand_path($1, dir)
+      pkgs.concat(extract_packages_recursive(inc_file, visited))
     end
   end
-  script_packages[bname] = pkgs.uniq
+  pkgs.uniq
+end
+
+scripts.each do |script|
+  bname = File.basename(script)
+  script_packages[bname] = extract_packages_recursive(script)
 end
 
 puts "\nFound #{scripts.size} scripts in soup collection:"
