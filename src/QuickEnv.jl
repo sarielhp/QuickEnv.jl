@@ -132,6 +132,24 @@ function update_script_cache_entry(script_path::String, env_name::String)
 end
 
 """
+    invalidate_script_cache(script_path::String)
+
+Purge the cached resolution entry for a specific script. Automatically called
+if a script exits with a non-zero exit code, ensuring that broken or partially
+modified multi-file dependencies trigger a fresh resolution.
+"""
+function invalidate_script_cache(script_path::String)
+    isempty(script_path) && return nothing
+    cache = load_cache()
+    scripts_table = get(cache, "scripts", Dict{String, Any}())
+    if haskey(scripts_table, script_path)
+        delete!(scripts_table, script_path)
+        cache["scripts"] = scripts_table
+        save_cache(cache)
+    end
+end
+
+"""
     check_cache_hit(required_packages::Vector{String}) -> Union{Nothing, String}
 
 Check if a cached resolution exists for the given required packages. Verifies that
@@ -1088,6 +1106,15 @@ end
 function __init__()
     script_path = get_script_path()
     isempty(script_path) && return nothing
+
+    # Register automatic failure-invalidation exit hook:
+    # If the script fails during runtime (e.g. non-zero exit code due to missing indirect
+    # dependency or runtime exception), invalidate its cached entry immediately.
+    atexit(function(exitcode=0)
+        if exitcode != 0
+            invalidate_script_cache(script_path)
+        end
+    end)
 
     env_verbose = get(ENV, "QUICKENV_VERBOSE", "false")
     env_silent = get(ENV, "QUICKENV_SILENT", "false")

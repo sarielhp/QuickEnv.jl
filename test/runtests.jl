@@ -397,5 +397,23 @@ using Pkg
         finally
             rm(target_dir, recursive=true, force=true)
         end
+
+        # 3. Script-level cache and failure invalidation
+        mock_script_path = tempname() * ".jl"
+        write(mock_script_path, "using QuickEnv\n")
+        try
+            QuickEnv.update_script_cache_entry(mock_script_path, "auto_script_test")
+            c_data = QuickEnv.load_cache()
+            @test haskey(c_data, "scripts")
+            @test haskey(c_data["scripts"], mock_script_path)
+            @test c_data["scripts"][mock_script_path]["env"] == "auto_script_test"
+
+            # Invalidate
+            QuickEnv.invalidate_script_cache(mock_script_path)
+            c_data_after = QuickEnv.load_cache()
+            @test !haskey(get(c_data_after, "scripts", Dict()), mock_script_path)
+        finally
+            rm(mock_script_path, force=true)
+        end
     end
 end
