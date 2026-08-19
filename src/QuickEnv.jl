@@ -405,7 +405,7 @@ function diagnose_and_suggest_packages(imported_packages::Vector{String}, is_sil
         is_casing_issue = false
 
         for cand in known_local
-            if lowercase(cand) == lowercase(pkg)
+            if cand != pkg && lowercase(cand) == lowercase(pkg)
                 suggestion = cand
                 is_casing_issue = true
                 break
@@ -436,8 +436,14 @@ function diagnose_and_suggest_packages(imported_packages::Vector{String}, is_sil
                 registry_loaded = true
             end
 
+            # If the package exists in the registry with the exact same name, it is a valid
+            # registry package (not a typo or casing mistake).
+            if pkg in registry_pkgs
+                continue
+            end
+
             for cand in registry_pkgs
-                if lowercase(cand) == lowercase(pkg)
+                if cand != pkg && lowercase(cand) == lowercase(pkg)
                     suggestion = cand
                     is_casing_issue = true
                     break

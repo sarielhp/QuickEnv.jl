@@ -438,6 +438,40 @@ function search_packages(query::String)
     end
 end
 
+# 15. Prune all auto-generated QuickEnv environments and clear cache
+function prune_environments()
+    if !isdir(ENV_DIR)
+        println(yellow("No environments directory found at $ENV_DIR."))
+        return
+    end
+
+    auto_envs = filter(
+        d -> (startswith(d, "auto_") || startswith(d, "test_")) && isdir(joinpath(ENV_DIR, d)),
+        readdir(ENV_DIR)
+    )
+
+    println(bold(cyan("\nPruning QuickEnv Auto-Generated Environments:")))
+    println(gray("─"^80))
+
+    if isempty(auto_envs)
+        println(gray("  (No auto-generated @auto_* environments found to prune)"))
+    else
+        for env in auto_envs
+            rm(joinpath(ENV_DIR, env); recursive=true, force=true)
+            println("  • Deleted $(bold(red("@" * env)))")
+        end
+    end
+
+    # Clear cache
+    cfile = QuickEnv.get_cache_file()
+    if isfile(cfile)
+        rm(cfile; force=true)
+        println(green("  • QuickEnv resolution cache cleared."))
+    end
+
+    println(bold(green("\nPrune complete! Environment registry is clean.\n")))
+end
+
 # 12. Merge multiple environments
 function merge_environments(target_raw::String, source_raws::Vector{String})
     target_env = clean_env_name(target_raw)
@@ -565,6 +599,7 @@ $(bold(yellow("Commands:")))
   merge <target> <env1> <env2> ...    Fast-stitch multiple environments together
   check-compat <env1> <env2> ...      Check dependency compatibility across envs
   cache [list|clean]                  Inspect or clear QuickEnv resolution cache
+  prune                               Delete all auto-generated environments and cache
   add <env_name> <pkg1> <pkg2>..      Add packages to a named environment
   describe <env_name> "<desc>"        Add/change description of an environment
   create <env_name> <script.jl>       Create an environment from a Julia script
@@ -598,6 +633,8 @@ function (@main)(args)
         length(action_args) < 2 ? print_command_help("check-compat") : check_compatibility(action_args)
     elseif action == "cache"
         manage_cache(action_args)
+    elseif action in ("prune", "clean-auto", "reset")
+        prune_environments()
     elseif action == "add"
         isempty(action_args) ? print_command_help("add") : add_packages(action_args[1], action_args[2:end])
     elseif action == "describe"
