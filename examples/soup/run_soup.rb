@@ -62,7 +62,10 @@ def analyze_logs(stderr_text)
   assigned_env = "None"
   sources = []
 
-  if stderr_text =~ /Fast-stitched autonomous environment @([a-zA-Z0-9_\-]+)\s*\n\s*from\s+([^\n]+)/m
+  if stderr_text =~ /Fast script cache hit for .*? -> @([a-zA-Z0-9_\-]+)/
+    assigned_env = "@#{$1}"
+    action = "Fast Script Cache Hit (mtime)"
+  elsif stderr_text =~ /Fast-stitched autonomous environment @([a-zA-Z0-9_\-]+)\s*\n\s*from\s+([^\n]+)/m
     assigned_env = "@#{$1}"
     sources = $2.strip.split(/\s*[\+,]\s*/).map { |s| s.sub(/^@/, '') }
     action = "Fast-Stitched (#{sources.map { |s| "@#{s}" }.join(' + ')})"

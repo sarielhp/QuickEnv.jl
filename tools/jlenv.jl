@@ -537,10 +537,24 @@ function manage_cache(args::Vector{String})
         if isempty(cache)
             println(gray("  (Cache is empty)"))
         else
-            for (key, val) in cache
-                env = get(val, "env", "unknown")
-                sources = get(val, "sources", String[])
-                println("  • Key: $(bold(key)) → $(bold(green("@" * env))) " * gray("(sources: " * join(sources, ", ") * ")"))
+            scripts_table = get(cache, "scripts", Dict{String, Any}())
+            resolutions = filter(pair -> pair.first != "scripts", cache)
+
+            if !isempty(resolutions)
+                println(bold(yellow("Package Resolutions:")))
+                for (key, val) in sort(collect(resolutions); by=first)
+                    env = get(val, "env", "unknown")
+                    sources = get(val, "sources", String[])
+                    println("  • $(bold(key)) → $(bold(green("@" * env))) " * gray("(sources: " * join(sources, ", ") * ")"))
+                end
+            end
+
+            if !isempty(scripts_table)
+                println(bold(yellow("\nScript Fast-Lookups:")))
+                for (spath, sval) in sort(collect(scripts_table); by=first)
+                    senv = get(sval, "env", "unknown")
+                    println("  • $(bold(basename(spath))) " * gray("($(dirname(spath)))") * " → $(bold(green("@" * senv)))")
+                end
             end
         end
         println()

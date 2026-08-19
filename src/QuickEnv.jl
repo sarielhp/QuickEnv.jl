@@ -1,6 +1,5 @@
 module QuickEnv
 
-using Pkg
 using TOML
 
 # =============================================================================
@@ -22,8 +21,28 @@ function get_script_path()
     return isempty(script_path) ? "" : abspath(script_path)
 end
 
+function activate_shared_env(env_name::String)
+    env_dir = joinpath(DEPOT_PATH[1], "environments", env_name)
+    proj_file = isfile(joinpath(env_dir, "JuliaProject.toml")) ?
+        joinpath(env_dir, "JuliaProject.toml") : joinpath(env_dir, "Project.toml")
+    if !isfile(proj_file)
+        mkpath(env_dir)
+        touch(proj_file)
+    end
+    Base.set_active_project(proj_file)
+end
+
+function activate_local_dir_env(dir_path::String)
+    proj_file = isfile(joinpath(dir_path, "JuliaProject.toml")) ?
+        joinpath(dir_path, "JuliaProject.toml") : joinpath(dir_path, "Project.toml")
+    if !isfile(proj_file)
+        touch(proj_file)
+    end
+    Base.set_active_project(proj_file)
+end
+
 # =============================================================================
-# Cache Subsystem (O(1) State-Aware Hashing)
+# Cache Subsystem (O(1) State-Aware Hashing & Fast Script Cache)
 # =============================================================================
 
 function get_cache_dir()
@@ -64,6 +83,52 @@ function save_cache(cache_data::Dict{String, Any})
         end
     catch
     end
+end
+
+"""
+    check_script_cache_hit(script_path::String) -> Union{Nothing, String}
+
+Super-fast O(1) script cache lookup by script absolute path and mtime.
+If the script file hasn't changed since its last execution and its target
+environment still exists, immediately returns the target environment without
+needing to parse file contents or run regexes.
+"""
+function check_script_cache_hit(script_path::String)
+    isempty(script_path) && return nothing
+    !isfile(script_path) && return nothing
+
+    cache = load_cache()
+    scripts_table = get(cache, "scripts", Dict{String, Any}())
+    !haskey(scripts_table, script_path) && return nothing
+
+    entry = scripts_table[script_path]
+    cached_mtime = get(entry, "mtime", 0.0)
+    current_mtime = mtime(script_path)
+    if abs(cached_mtime - current_mtime) < 1e-3
+        target_env = get(entry, "env", "")
+        if !isempty(target_env)
+            target_proj = joinpath(DEPOT_PATH[1], "environments", target_env, "Project.toml")
+            if isfile(target_proj)
+                return target_env
+            end
+        end
+    end
+    return nothing
+end
+
+function update_script_cache_entry(script_path::String, env_name::String)
+    isempty(script_path) && return nothing
+    !isfile(script_path) && return nothing
+
+    cache = load_cache()
+    scripts_table = get(cache, "scripts", Dict{String, Any}())
+    scripts_table[script_path] = Dict{String, Any}(
+        "mtime" => mtime(script_path),
+        "env" => env_name,
+        "updated_at" => string(time())
+    )
+    cache["scripts"] = scripts_table
+    save_cache(cache)
 end
 
 """
@@ -426,9 +491,13 @@ function diagnose_and_suggest_packages(imported_packages::Vector{String}, is_sil
         if suggestion === nothing
             if !registry_loaded
                 try
-                    for reg in Pkg.Registry.reachable_registries()
-                        for p in values(reg.pkgs)
-                            push!(registry_pkgs, p.name)
+                    reg_file = joinpath(DEPOT_PATH[1], "registries", "General", "Registry.toml")
+                    if isfile(reg_file)
+                        reg_data = TOML.parsefile(reg_file)
+                        pkgs_dict = get(reg_data, "packages", Dict{String, Any}())
+                        for (uuid, pinfo) in pkgs_dict
+                            pname = get(pinfo, "name", "")
+                            !isempty(pname) && push!(registry_pkgs, pname)
                         end
                     end
                 catch
@@ -506,7 +575,7 @@ function activate_matched_env(matching::Vector{String}, is_verbose::Bool)
             @info "QuickEnv: Found matching environment @$env_name.\nActivating..."
             println(stderr)
         end
-        Pkg.activate(env_name; shared=true, io=devnull)
+        activate_shared_env(env_name)
     end
 end
 
@@ -519,7 +588,7 @@ function activate_fallback_env(
             @info "QuickEnv: Activating environment @$fallback_env..."
             println(stderr)
         end
-        Pkg.activate(fallback_env; shared=true, io=devnull)
+        activate_shared_env(fallback_env)
         return "@" * fallback_env
     end
 
@@ -529,7 +598,7 @@ function activate_fallback_env(
         @info "QuickEnv: Activating local environment at $script_dir..."
         println(stderr)
     end
-    Pkg.activate(script_dir; io=devnull)
+    activate_local_dir_env(script_dir)
     return "local directory environment"
 end
 
@@ -567,7 +636,8 @@ function bootstrap_packages(
             println(stderr)
         end
         try
-            Pkg.add(missing_pkgs; io=is_silent ? devnull : stderr)
+            @eval import Pkg
+            Base.invokelatest(Pkg.add, missing_pkgs; io=is_silent ? devnull : stderr)
         catch e
             @error "QuickEnv: Failed to install packages $missing_pkgs: $e"
         end
@@ -726,7 +796,7 @@ function handle_forced_creation(
                 @info "QuickEnv: Found existing environment @$create_env\nwith all dependencies. Activating..."
                 println(stderr)
             end
-            Pkg.activate(create_env; shared=true, io=devnull)
+            activate_shared_env(create_env)
         end
         return true
     end
@@ -743,9 +813,10 @@ function handle_forced_creation(
         println(stderr, "====================================================\n")
     end
 
-    Pkg.activate(create_env; shared=true, io=is_silent ? devnull : stderr)
+    activate_shared_env(create_env)
     try
-        Pkg.add(missing_pkgs; io=is_silent ? devnull : stderr)
+        @eval import Pkg
+        Base.invokelatest(Pkg.add, missing_pkgs; io=is_silent ? devnull : stderr)
     catch e
         @error "QuickEnv: Failed to install packages $missing_pkgs into @$create_env: $e"
     end
@@ -1018,16 +1089,29 @@ function __init__()
     script_path = get_script_path()
     isempty(script_path) && return nothing
 
+    env_verbose = get(ENV, "QUICKENV_VERBOSE", "false")
+    env_silent = get(ENV, "QUICKENV_SILENT", "false")
+
+    # Fast 1-step script-level cache hit (mtime + path verification)
+    cached_script_env = check_script_cache_hit(script_path)
+    if cached_script_env !== nothing
+        is_verbose = (lowercase(env_verbose) == "true")
+        if is_verbose
+            println(stderr)
+            @info "QuickEnv: Fast script cache hit for $script_path -> @$cached_script_env"
+            println(stderr)
+        end
+        activate_shared_env(cached_script_env)
+        return nothing
+    end
+
     required_packages, fallback_env, excluded_envs, script_verbose, script_silent, create_env, description, is_local = parse_script_metadata(
         script_path
     )
 
     filter!(p -> (p != "QuickEnv"), required_packages)
 
-    env_verbose = get(ENV, "QUICKENV_VERBOSE", "false")
     is_verbose = (lowercase(env_verbose) == "true") || script_verbose
-
-    env_silent = get(ENV, "QUICKENV_SILENT", "false")
     is_silent = (lowercase(env_silent) == "true") || script_silent
 
     diagnose_and_suggest_packages(required_packages, is_silent)
@@ -1035,6 +1119,7 @@ function __init__()
     if handle_forced_creation(create_env, required_packages, is_verbose, is_silent)
         warn_ignored_local_files(script_path, create_env, is_silent)
         update_active_env_description(description)
+        update_script_cache_entry(script_path, create_env)
         return nothing
     end
 
@@ -1047,6 +1132,9 @@ function __init__()
         active_dir = dirname(project_file)
         if active_dir != dirname(script_path) && !occursin(r"^v\d+\.\d+$", basename(active_dir))
             warn_ignored_local_files(script_path, basename(active_dir), is_silent)
+            if isempty(fallback_env) && !is_local
+                update_script_cache_entry(script_path, basename(active_dir))
+            end
         end
     end
 
