@@ -1025,7 +1025,16 @@ function parse_standalone_comments(line::String)
     return fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
 end
 
-function parse_script_metadata(script_path::String)
+function extract_included_file(line::String, current_dir::String)
+    clean_line = strip(first(split(line, '#')))
+    m = match(r"\binclude\s*\(\s*[\"\']([^\"\']+)[\"\']\s*\)", clean_line)
+    m === nothing && return ""
+    inc_target = m.captures[1]
+    inc_path = isabspath(inc_target) ? inc_target : joinpath(current_dir, inc_target)
+    return isfile(inc_path) ? abspath(inc_path) : ""
+end
+
+function parse_script_metadata(script_path::String; visited=Set{String}())
     packages = String[]
     fallback_env = ""
     excluded_envs = String[]
@@ -1034,8 +1043,12 @@ function parse_script_metadata(script_path::String)
     create_env = ""
     description = ""
     is_local = false
+    included_files = String[]
 
     !isfile(script_path) && return packages, fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
+
+    push!(visited, script_path)
+    current_dir = dirname(script_path)
 
     for line in eachline(script_path)
         inline_fallback, inline_excl, inline_verbose, inline_silent, inline_create, inline_desc, inline_local = parse_inline_options(line)
@@ -1059,7 +1072,32 @@ function parse_script_metadata(script_path::String)
         for pkg in extract_packages_from_line(line)
             !(pkg in packages) && push!(packages, pkg)
         end
+
+        inc_file = extract_included_file(line, current_dir)
+        if !isempty(inc_file) && !(inc_file in visited)
+            push!(included_files, inc_file)
+        end
     end
+
+    # Recursively scan included files for hidden using/import statements
+    for inc_file in included_files
+        inc_pkgs, _, _, _, _, _, _, _ = parse_script_metadata(inc_file; visited=visited)
+        new_pkgs = filter(p -> !(p in packages) && p != "QuickEnv", inc_pkgs)
+        if !isempty(new_pkgs)
+            if !is_silent
+                println(stderr)
+                @warn "QuickEnv: Detected package import(s) $new_pkgs inside included file:\n" *
+                      "  $inc_file\n" *
+                      "Best practice in Julia is to declare all `using` dependencies at the top of the main entry script.\n" *
+                      "(Declare 'silent' to suppress this warning)."
+                println(stderr)
+            end
+            for p in new_pkgs
+                push!(packages, p)
+            end
+        end
+    end
+
     return packages, fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
 end
 

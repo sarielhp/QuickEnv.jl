@@ -189,6 +189,25 @@ using Pkg
         finally
             rm(tmp_path_c)
         end
+
+        # Test Recursive include scanning
+        tdir = mktempdir()
+        try
+            helper_file = joinpath(tdir, "helper.jl")
+            main_file = joinpath(tdir, "main.jl")
+
+            write(helper_file, "using JSON\nusing Dates\n")
+            write(main_file, "using QuickEnv # silent\nusing Plots\ninclude(\"helper.jl\")\n")
+
+            inc_pkgs, _, _, _, _, _, _, _ = QuickEnv.parse_script_metadata(main_file)
+            @test "QuickEnv" in inc_pkgs
+            @test "Plots" in inc_pkgs
+            @test "JSON" in inc_pkgs
+            @test "Dates" in inc_pkgs
+            @test length(inc_pkgs) == 4
+        finally
+            rm(tdir, recursive=true, force=true)
+        end
     end
 
     @testset "Project.toml Description Write" begin
