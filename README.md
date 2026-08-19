@@ -398,6 +398,27 @@ Like other standalone scripts managed by `QuickEnv.jl`, the CLI tool automatical
 
 ---
 
+## 🎯 Design Philosophy, Best Practices & Limitations
+
+### 1. Exploration vs. Production
+`QuickEnv.jl` is designed for **interactive exploration, data analysis workflows, standalone utilities, and frictionless script sharing**. It removes the mental friction of managing `--project` flags and prevents global environment clutter.
+
+For **mission-critical production deployments, packages, and microservices** where 100% byte-for-byte immutable reproducibility is required, committing a frozen `Manifest.toml` directly to Git remains the Julia ecosystem standard.
+
+### 2. Static Include Scanning vs. Dynamic Includes
+QuickEnv statically scans entry scripts and recursively follows static `include("path/to/helper.jl")` statements to discover all required dependencies.
+- **Limitation**: Dynamic include expressions (such as `include(joinpath(@__DIR__, ARGS[1]))`) cannot be evaluated prior to runtime.
+- **Best Practice**: Declare your primary `using` statements at the top of the main entry-point script, or use `using QuickEnv # local` for full multi-file local project folders.
+
+### 3. Submodule & Nested Package Imports
+QuickEnv automatically parses and maps submodule imports (e.g. `using HTTP.WebSockets` or `import DataFrames.DataFrame`) back to their root registered package (`HTTP`, `DataFrames`).
+
+### 4. Failure Recovery & Concurrency Safety
+- **Automatic Self-Healing**: If a script run fails due to an unhandled exception or missing transitive dependency, QuickEnv automatically invalidates the script's cached entry upon exit. Subsequent runs execute a fresh, comprehensive resolution pass.
+- **Atomic POSIX Writes**: All cache operations and compound environment creations use PID-isolated temporary files and atomic POSIX replacement (`mv`), ensuring safety across concurrent script executions.
+
+---
+
 ## Disclaimer
 
 Most the package was written using antigravity-cli. However, I (a real

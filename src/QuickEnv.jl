@@ -77,11 +77,14 @@ function save_cache(cache_data::Dict{String, Any})
     cdir = get_cache_dir()
     mkpath(cdir)
     cfile = get_cache_file()
+    tmpfile = cfile * ".tmp." * string(getpid())
     try
-        open(cfile, "w") do io
+        open(tmpfile, "w") do io
             TOML.print(io, cache_data)
         end
+        mv(tmpfile, cfile; force=true)
     catch
+        isfile(tmpfile) && rm(tmpfile; force=true)
     end
 end
 
@@ -326,31 +329,35 @@ function check_manifest_compat(env_names::Vector{String})
                 deps = get(m_data, "deps", Dict{String, Any}())
 
                 for (pkg, val) in deps
-                    entry = isa(val, Vector) ? first(val) : val
-                    uuid = get(entry, "uuid", "")
+                    entries = isa(val, Vector) ? val : [val]
+                    for entry in entries
+                        uuid = get(entry, "uuid", "")
 
-                    if haskey(merged_manifest_deps, pkg)
-                        existing_val = merged_manifest_deps[pkg]
-                        existing = isa(existing_val, Vector) ? first(existing_val) : existing_val
-                        existing_uuid = get(existing, "uuid", "")
+                        if haskey(merged_manifest_deps, pkg)
+                            existing_val = merged_manifest_deps[pkg]
+                            existing_entries = isa(existing_val, Vector) ? existing_val : [existing_val]
+                            for existing in existing_entries
+                                existing_uuid = get(existing, "uuid", "")
 
-                        # UUID conflict
-                        if uuid != existing_uuid
-                            return false, Dict{String, Any}(), Dict{String, Any}()
+                                # UUID conflict
+                                if !isempty(uuid) && !isempty(existing_uuid) && uuid != existing_uuid
+                                    return false, Dict{String, Any}(), Dict{String, Any}()
+                                end
+
+                                # Version & hash check (skip for stdlibs without versions)
+                                v1 = get(entry, "version", "")
+                                v2 = get(existing, "version", "")
+                                s1 = get(entry, "git-tree-sha1", "")
+                                s2 = get(existing, "git-tree-sha1", "")
+
+                                if (!isempty(v1) && !isempty(v2) && v1 != v2) ||
+                                   (!isempty(s1) && !isempty(s2) && s1 != s2)
+                                    return false, Dict{String, Any}(), Dict{String, Any}()
+                                end
+                            end
+                        else
+                            merged_manifest_deps[pkg] = val
                         end
-
-                        # Version & hash check (skip for stdlibs without versions)
-                        v1 = get(entry, "version", "")
-                        v2 = get(existing, "version", "")
-                        s1 = get(entry, "git-tree-sha1", "")
-                        s2 = get(existing, "git-tree-sha1", "")
-
-                        if (!isempty(v1) && !isempty(v2) && v1 != v2) ||
-                           (!isempty(s1) && !isempty(s2) && s1 != s2)
-                            return false, Dict{String, Any}(), Dict{String, Any}()
-                        end
-                    else
-                        merged_manifest_deps[pkg] = val
                     end
                 end
             catch
@@ -383,24 +390,38 @@ function stitch_environments(
     target_dir = joinpath(DEPOT_PATH[1], "environments", target_env)
     mkpath(target_dir)
 
-    # Write Project.toml
+    # Write Project.toml atomically
     proj_content = Dict(
         "name" => target_env,
         "description" => "Autonomous compound environment combining @" * join(source_envs, ", @"),
         "deps" => merged_deps
     )
-    open(joinpath(target_dir, "Project.toml"), "w") do io
-        TOML.print(io, proj_content)
+    p_file = joinpath(target_dir, "Project.toml")
+    p_tmp = p_file * ".tmp." * string(getpid())
+    try
+        open(p_tmp, "w") do io
+            TOML.print(io, proj_content)
+        end
+        mv(p_tmp, p_file; force=true)
+    catch
+        isfile(p_tmp) && rm(p_tmp; force=true)
     end
 
-    # Write Manifest.toml
+    # Write Manifest.toml atomically
     manifest_content = Dict(
         "julia_version" => string(VERSION),
         "manifest_format" => "2.0",
         "deps" => merged_manifest_deps
     )
-    open(joinpath(target_dir, "Manifest.toml"), "w") do io
-        TOML.print(io, manifest_content)
+    m_file = joinpath(target_dir, "Manifest.toml")
+    m_tmp = m_file * ".tmp." * string(getpid())
+    try
+        open(m_tmp, "w") do io
+            TOML.print(io, manifest_content)
+        end
+        mv(m_tmp, m_file; force=true)
+    catch
+        isfile(m_tmp) && rm(m_tmp; force=true)
     end
 
     if !is_silent
@@ -620,6 +641,11 @@ function activate_fallback_env(
     return "local directory environment"
 end
 
+function lazy_pkg_add(packages::Vector{String}, is_silent::Bool)
+    pkg_mod = Base.require(Main, :Pkg)
+    Base.invokelatest(getproperty(pkg_mod, :add), packages; io=is_silent ? devnull : stderr)
+end
+
 function bootstrap_packages(
     required_packages::Vector{String}, target_env_display::String, is_silent::Bool
 )
@@ -654,8 +680,7 @@ function bootstrap_packages(
             println(stderr)
         end
         try
-            @eval import Pkg
-            Base.invokelatest(Pkg.add, missing_pkgs; io=is_silent ? devnull : stderr)
+            lazy_pkg_add(missing_pkgs, is_silent)
         catch e
             @error "QuickEnv: Failed to install packages $missing_pkgs: $e"
         end
@@ -833,8 +858,7 @@ function handle_forced_creation(
 
     activate_shared_env(create_env)
     try
-        @eval import Pkg
-        Base.invokelatest(Pkg.add, missing_pkgs; io=is_silent ? devnull : stderr)
+        lazy_pkg_add(missing_pkgs, is_silent)
     catch e
         @error "QuickEnv: Failed to install packages $missing_pkgs into @$create_env: $e"
     end
@@ -902,8 +926,9 @@ function extract_packages_from_line(line::String)
     for part in parts
         pkg = strip(part)
         if !isempty(pkg) && !startswith(pkg, '.')
-            pkg_name = first(split(pkg))
-            push!(packages, String(pkg_name))
+            raw_pkg = first(split(pkg))
+            pkg_name = first(split(raw_pkg, '.'))
+            !isempty(pkg_name) && push!(packages, String(pkg_name))
         end
     end
     return packages
@@ -1146,10 +1171,10 @@ function __init__()
     isempty(script_path) && return nothing
 
     # Register automatic failure-invalidation exit hook:
-    # If the script fails during runtime (e.g. non-zero exit code due to missing indirect
-    # dependency or runtime exception), invalidate its cached entry immediately.
-    atexit(function(exitcode=0)
-        if exitcode != 0
+    # If the script fails during runtime (e.g. unhandled exception),
+    # invalidate its cached entry immediately.
+    atexit(function()
+        if isdefined(Base, :current_exceptions) && !isempty(Base.current_exceptions())
             invalidate_script_cache(script_path)
         end
     end)

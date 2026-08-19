@@ -57,6 +57,27 @@ using Pkg
             rm(tmp_path)
         end
 
+        # Test Submodule / sub-path import parsing
+        mock_script_submod = """
+        #!/usr/bin/env julia
+        using QuickEnv # silent
+        using HTTP.WebSockets
+        import DataFrames.DataFrame
+        """
+        tmp_path_sub, io_sub = mktemp()
+        try
+            write(io_sub, mock_script_submod)
+            close(io_sub)
+
+            pkgs_sub, _, _, _, _, _, _, _ = QuickEnv.parse_script_metadata(tmp_path_sub)
+            @test "HTTP" in pkgs_sub
+            @test "DataFrames" in pkgs_sub
+            @test !("HTTP.WebSockets" in pkgs_sub)
+            @test !("DataFrames.DataFrame" in pkgs_sub)
+        finally
+            rm(tmp_path_sub, force=true)
+        end
+
         # Test Inline verbose parsing
         mock_script_verbose = "#!/usr/bin/env julia\n" * "using QuickEnv # verbose\n"
         tmp_path_v, io_v = mktemp()
