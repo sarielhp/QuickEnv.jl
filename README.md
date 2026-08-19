@@ -4,17 +4,27 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Julia Version](https://img.shields.io/badge/julia-v1.6+-8A2BE2.svg)](https://julialang.org/)
 
-`QuickEnv.jl` is an environment manager for Julia scripts. It automates package management for standalone `.jl` scripts by dynamically resolving and isolating dependencies into shared named environments or local directories without requiring manual project configuration.
+`QuickEnv.jl` automatically handles all the environment setup required to run your Julia scripts.
+
+After installing `QuickEnv` once in your global environment, simply add `using QuickEnv` to the top of your file. From that point on, execution is completely seamless: QuickEnv inspects your script's imports, finds or creates a matching environment, installs any missing packages, and activates everything transparently before your code runs.
+
+Just execute your script—QuickEnv takes care of the setup behind the scenes, eliminating the usual environment tedium in Julia.
 
 ---
 
 ## Quick start
 
-When executing a Julia script, dependency resolution depends on the active project environment. QuickEnv manages this by checking available shared environments, creating one if none matches, installing missing dependencies, and executing the script.
+### 1. Install once in your global environment
 
-### Default behavior
+```julia
+using Pkg
+Pkg.activate()  # Activate standard global environment (e.g., @v1.12)
+Pkg.add(url="https://github.com/sarielhp/QuickEnv.jl.git")
+```
 
-Add `QuickEnv` as the first dependency in your script. When executed, QuickEnv inspects imported packages:
+### 2. Add `using QuickEnv` to the top of your script
+
+Simply add `using QuickEnv` as the first import in your script:
 
 ```julia
 #!/usr/bin/env julia
@@ -24,7 +34,11 @@ using Plots
 # Rest of the program...
 ```
 
-If an existing [named environment](#understanding-shared-named-environments) satisfies the script's imports (for example, `@plotting`), QuickEnv activates it. If no existing environment satisfies the requirements, QuickEnv creates a dedicated named environment (`@auto_<hash>`) or local directory environment, installs missing packages via `Pkg.add`, and executes the script. Subsequent runs reuse the cached environment resolution.
+That's it! When you run `julia your_script.jl` or `./your_script.jl`:
+- QuickEnv parses the script's imports (`using Plots`).
+- If an existing [named environment](#understanding-shared-named-environments) satisfies the imports (e.g., `@plotting`), QuickEnv activates it immediately.
+- If no existing environment matches, QuickEnv creates a dedicated named environment (`@auto_<hash>`), installs any missing packages via `Pkg.add`, and activates it.
+- Everything runs transparently, and subsequent runs reuse cached resolution for near-zero startup overhead.
 
 ---
 
