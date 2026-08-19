@@ -516,7 +516,7 @@ function activate_fallback_env(
     if !isempty(fallback_env)
         if is_verbose
             println(stderr)
-            @info "QuickEnv: Activating fallback @$fallback_env..."
+            @info "QuickEnv: Activating environment @$fallback_env..."
             println(stderr)
         end
         Pkg.activate(fallback_env; shared=true, io=devnull)
@@ -577,14 +577,15 @@ end
 
 """
     handle_matching_or_fallback(
-        required_packages, fallback_env, excluded_envs, is_verbose, is_silent, script_path
+        required_packages, fallback_env, excluded_envs, is_verbose, is_silent, is_local, script_path
     )
 
 The main autonomous environment resolution pipeline:
-1. Fast-path: Check O(1) state-aware cache hit.
-2. Single-environment matching: Search existing named environments.
-3. Bitmask Set-Cover & Fast Manifest Stitching: Combine compatible environments (<5ms).
-4. Fallback: Activate requested fallback or local project, bootstrapping missing dependencies.
+1. Local directory override: If is_local is true (# local), activates script_dir (--project=.).
+2. Fast-path: Check O(1) state-aware cache hit.
+3. Single-environment matching: Search existing named environments.
+4. Bitmask Set-Cover & Fast Manifest Stitching: Combine compatible environments (<5ms).
+5. Autonomous Creation / Fallback: Create dedicated @auto_<hash> environment in depot or fallback.
 """
 function handle_matching_or_fallback(
     required_packages::Vector{String},
@@ -592,8 +593,24 @@ function handle_matching_or_fallback(
     excluded_envs::Vector{String},
     is_verbose::Bool,
     is_silent::Bool,
+    is_local::Bool,
     script_path::String,
 )
+    # -------------------------------------------------------------------------
+    # 0. Local Directory Environment Override (# local)
+    # -------------------------------------------------------------------------
+    if is_local
+        script_dir = dirname(script_path)
+        if is_verbose
+            println(stderr)
+            @info "QuickEnv: Activating local directory environment at $script_dir..."
+            println(stderr)
+        end
+        Pkg.activate(script_dir; io=devnull)
+        bootstrap_packages(required_packages, "local directory environment", is_silent)
+        return nothing
+    end
+
     # -------------------------------------------------------------------------
     # 1. Check O(1) State-Aware Cache Hit
     # -------------------------------------------------------------------------
@@ -660,10 +677,19 @@ function handle_matching_or_fallback(
     end
 
     # -------------------------------------------------------------------------
-    # 4. Fallback Execution
+    # 4. Autonomous Environment Creation or Explicit Fallback Execution
     # -------------------------------------------------------------------------
-    target_env_display = activate_fallback_env(fallback_env, script_path, is_verbose)
+    target_env = fallback_env
+    if isempty(target_env)
+        key = get_canonical_key(required_packages)
+        target_env = "auto_" * get_cache_hash(key)
+    end
+
+    target_env_display = activate_fallback_env(target_env, script_path, is_verbose)
     bootstrap_packages(required_packages, target_env_display, is_silent)
+    if isempty(fallback_env)
+        update_cache_entry(required_packages, target_env, [target_env])
+    end
 end
 
 function handle_forced_creation(
@@ -801,16 +827,18 @@ function parse_inline_options(line::String)
     is_silent = false
     create_env = ""
     description = ""
+    is_local = false
 
     parts = split(line, '#')
-    length(parts) <= 1 && return fallback_env, excluded_envs, is_verbose, is_silent, create_env, description
+    length(parts) <= 1 && return fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
 
     comment_part = strip(parts[2])
     clean_line = strip(parts[1])
-    !occursin(r"\bQuickEnv\b", clean_line) && return fallback_env, excluded_envs, is_verbose, is_silent, create_env, description
+    !occursin(r"\bQuickEnv\b", clean_line) && return fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
 
     if occursin(r"(?i)\bverbose\b", comment_part); is_verbose = true; end
     if occursin(r"(?i)\bsilent\b", comment_part); is_silent = true; end
+    if occursin(r"(?i)\blocal\b", comment_part); is_local = true; end
 
     m_inline_fallback = match(r"(?i)\bfallback\s*:\s*([a-zA-Z0-9_\-]+)", comment_part)
     if m_inline_fallback !== nothing; fallback_env = String(m_inline_fallback.captures[1]); end
@@ -833,13 +861,14 @@ function parse_inline_options(line::String)
         raw_excl = replace(raw_excl, r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))" => "")
         raw_excl = replace(raw_excl, r"(?i)\bverbose\b" => "")
         raw_excl = replace(raw_excl, r"(?i)\bsilent\b" => "")
+        raw_excl = replace(raw_excl, r"(?i)\blocal\b" => "")
         for item in split(raw_excl, ',')
             clean_item = strip(item)
             !isempty(clean_item) && push!(excluded_envs, String(clean_item))
         end
     end
 
-    return fallback_env, excluded_envs, is_verbose, is_silent, create_env, description
+    return fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
 end
 
 function parse_standalone_comments(line::String)
@@ -849,6 +878,7 @@ function parse_standalone_comments(line::String)
     is_silent = nothing
     create_env = ""
     description = ""
+    is_local = nothing
 
     m_fallback = match(r"^\s*#\s*quickenv_fallback\s*:\s*(.*)$", line)
     if m_fallback !== nothing
@@ -896,7 +926,14 @@ function parse_standalone_comments(line::String)
     m_silent = match(r"^\s*#\s*(?:quickenv_silent|QuickEnv\.silent)\s*:\s*([a-zA-Z0-9_\-]+)", line)
     if m_silent !== nothing; is_silent = lowercase(strip(m_silent.captures[1])) == "true"; end
 
-    return fallback_env, excluded_envs, is_verbose, is_silent, create_env, description
+    m_local = match(r"^\s*#\s*(?:quickenv_local|QuickEnv\.local)\s*:\s*([a-zA-Z0-9_\-]+)", line)
+    if m_local !== nothing
+        is_local = lowercase(strip(m_local.captures[1])) == "true"
+    elseif occursin(r"^\s*#\s*local\s*$", line)
+        is_local = true
+    end
+
+    return fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
 end
 
 function parse_script_metadata(script_path::String)
@@ -907,23 +944,26 @@ function parse_script_metadata(script_path::String)
     is_silent = false
     create_env = ""
     description = ""
+    is_local = false
 
-    !isfile(script_path) && return packages, fallback_env, excluded_envs, is_verbose, is_silent, create_env, description
+    !isfile(script_path) && return packages, fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
 
     for line in eachline(script_path)
-        inline_fallback, inline_excl, inline_verbose, inline_silent, inline_create, inline_desc = parse_inline_options(line)
+        inline_fallback, inline_excl, inline_verbose, inline_silent, inline_create, inline_desc, inline_local = parse_inline_options(line)
         !isempty(inline_fallback) && (fallback_env = inline_fallback)
         !isempty(inline_excl) && append!(excluded_envs, inline_excl)
         inline_verbose && (is_verbose = true)
         inline_silent && (is_silent = true)
+        inline_local && (is_local = true)
         !isempty(inline_create) && (create_env = inline_create)
         !isempty(inline_desc) && (description = inline_desc)
 
-        sa_fallback, sa_excl, sa_verbose, sa_silent, sa_create, sa_desc = parse_standalone_comments(line)
+        sa_fallback, sa_excl, sa_verbose, sa_silent, sa_create, sa_desc, sa_local = parse_standalone_comments(line)
         !isempty(sa_fallback) && (fallback_env = sa_fallback)
         !isempty(sa_excl) && append!(excluded_envs, sa_excl)
         sa_verbose !== nothing && (is_verbose = sa_verbose)
         sa_silent !== nothing && (is_silent = sa_silent)
+        sa_local !== nothing && (is_local = sa_local)
         !isempty(sa_create) && (create_env = sa_create)
         !isempty(sa_desc) && (description = sa_desc)
 
@@ -931,7 +971,7 @@ function parse_script_metadata(script_path::String)
             !(pkg in packages) && push!(packages, pkg)
         end
     end
-    return packages, fallback_env, excluded_envs, is_verbose, is_silent, create_env, description
+    return packages, fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
 end
 
 function find_matching_envs(required_pkgs::Vector{String})
@@ -978,7 +1018,7 @@ function __init__()
     script_path = get_script_path()
     isempty(script_path) && return nothing
 
-    required_packages, fallback_env, excluded_envs, script_verbose, script_silent, create_env, description = parse_script_metadata(
+    required_packages, fallback_env, excluded_envs, script_verbose, script_silent, create_env, description, is_local = parse_script_metadata(
         script_path
     )
 
@@ -999,7 +1039,7 @@ function __init__()
     end
 
     handle_matching_or_fallback(
-        required_packages, fallback_env, excluded_envs, is_verbose, is_silent, script_path
+        required_packages, fallback_env, excluded_envs, is_verbose, is_silent, is_local, script_path
     )
 
     project_file = Base.active_project()

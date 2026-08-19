@@ -22,7 +22,7 @@ using Pkg
             close(io)
 
             # Parse the metadata
-            pkgs, fallback, excluded, is_verbose, is_silent, create_env, description = QuickEnv.parse_script_metadata(
+            pkgs, fallback, excluded, is_verbose, is_silent, create_env, description, is_local = QuickEnv.parse_script_metadata(
                 tmp_path
             )
 
@@ -51,6 +51,7 @@ using Pkg
 
             # Verify description extraction from inline comment
             @test description == "Inline test description"
+            @test is_local == false
         finally
             # Clean up the temp file
             rm(tmp_path)
@@ -63,10 +64,23 @@ using Pkg
             write(io_v, mock_script_verbose)
             close(io_v)
 
-            _, _, _, is_verbose_v, _, _, _ = QuickEnv.parse_script_metadata(tmp_path_v)
+            _, _, _, is_verbose_v, _, _, _, _ = QuickEnv.parse_script_metadata(tmp_path_v)
             @test is_verbose_v == true
         finally
             rm(tmp_path_v)
+        end
+
+        # Test Inline local parsing
+        mock_script_local = "#!/usr/bin/env julia\n" * "using QuickEnv # local\n"
+        tmp_path_l, io_l = mktemp()
+        try
+            write(io_l, mock_script_local)
+            close(io_l)
+
+            _, _, _, _, _, _, _, is_local_l = QuickEnv.parse_script_metadata(tmp_path_l)
+            @test is_local_l == true
+        finally
+            rm(tmp_path_l)
         end
 
         # Test Standalone QuickEnv.create parsing
@@ -80,7 +94,7 @@ using Pkg
             write(io_s, mock_script_standalone)
             close(io_s)
 
-            _, _, _, _, _, create_env_s, _ = QuickEnv.parse_script_metadata(tmp_path_s)
+            _, _, _, _, _, create_env_s, _, _ = QuickEnv.parse_script_metadata(tmp_path_s)
             @test create_env_s == "data_test_standalone"
         finally
             rm(tmp_path_s)
@@ -97,7 +111,7 @@ using Pkg
             write(io_d, mock_script_standalone_desc)
             close(io_d)
 
-            _, _, _, _, _, _, description_d = QuickEnv.parse_script_metadata(tmp_path_d)
+            _, _, _, _, _, _, description_d, _ = QuickEnv.parse_script_metadata(tmp_path_d)
             @test description_d == "Standalone test description"
         finally
             rm(tmp_path_d)
@@ -114,7 +128,7 @@ using Pkg
             write(io_d2, mock_script_standalone_desc_short)
             close(io_d2)
 
-            _, _, _, _, _, _, description_d2 = QuickEnv.parse_script_metadata(tmp_path_d2)
+            _, _, _, _, _, _, description_d2, _ = QuickEnv.parse_script_metadata(tmp_path_d2)
             @test description_d2 == "Standalone short desc test"
         finally
             rm(tmp_path_d2)
@@ -130,7 +144,7 @@ using Pkg
             write(io_d3, mock_script_inline_desc_short)
             close(io_d3)
 
-            _, _, _, _, _, _, description_d3 = QuickEnv.parse_script_metadata(tmp_path_d3)
+            _, _, _, _, _, _, description_d3, _ = QuickEnv.parse_script_metadata(tmp_path_d3)
             @test description_d3 == "Inline short desc test"
         finally
             rm(tmp_path_d3)
@@ -147,7 +161,7 @@ using Pkg
             write(io_f, mock_script_fallback_with_desc)
             close(io_f)
 
-            _, fallback_env_f, _, _, _, _, description_f = QuickEnv.parse_script_metadata(
+            _, fallback_env_f, _, _, _, _, description_f, _ = QuickEnv.parse_script_metadata(
                 tmp_path_f
             )
             @test fallback_env_f == "plotting_test"
@@ -167,7 +181,7 @@ using Pkg
             write(io_c, mock_script_create_with_desc)
             close(io_c)
 
-            _, _, _, _, _, create_env_c, description_c = QuickEnv.parse_script_metadata(
+            _, _, _, _, _, create_env_c, description_c, _ = QuickEnv.parse_script_metadata(
                 tmp_path_c
             )
             @test create_env_c == "data_test"

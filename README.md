@@ -184,7 +184,14 @@ Sets or updates the custom description for the activated environment's `Project.
 ```
 *Note: The keyword `global` acts as a wildcard excluding standard versioned global environments (e.g., `@v1.12`).*
 
-#### 5. Silent by Default & Verbose Mode (`verbose` or `QUICKENV_VERBOSE`)
+#### 5. Local directory environment (`# local` or `quickenv_local: true`)
+Tells QuickEnv to activate the script's local folder as a dedicated project (equivalent to running `julia --project=. script.jl`), rather than using global or autonomous named environments.
+```julia
+using QuickEnv # local
+```
+*Missing packages will be installed directly into the local folder's `Project.toml`.*
+
+#### 6. Silent by Default & Verbose Mode (`verbose` or `QUICKENV_VERBOSE`)
 By default, **QuickEnv runs completely silently** when matching existing environments. Information logs are only printed when a new environment is being created or missing packages are being installed.
 
 To enable verbose activation logs, use the `verbose` magic keyword:
