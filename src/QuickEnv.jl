@@ -682,7 +682,11 @@ function bootstrap_packages(
         try
             lazy_pkg_add(missing_pkgs, is_silent)
         catch e
-            @error "QuickEnv: Failed to install packages $missing_pkgs: $e"
+            println(stderr)
+            @error "QuickEnv: Failed to install packages $missing_pkgs into $target_env_display."
+            diagnose_and_suggest_packages(missing_pkgs, false)
+            println(stderr)
+            rethrow(e)
         end
     end
     return nothing
@@ -860,7 +864,11 @@ function handle_forced_creation(
     try
         lazy_pkg_add(missing_pkgs, is_silent)
     catch e
-        @error "QuickEnv: Failed to install packages $missing_pkgs into @$create_env: $e"
+        println(stderr)
+        @error "QuickEnv: Failed to install packages $missing_pkgs into @$create_env."
+        diagnose_and_suggest_packages(missing_pkgs, false)
+        println(stderr)
+        rethrow(e)
     end
     return true
 end
