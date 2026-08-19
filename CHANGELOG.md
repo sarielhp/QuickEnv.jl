@@ -2,6 +2,11 @@
 
 All notable changes to the `QuickEnv` package will be documented in this file.
 
+## [0.3.1] - 2026-08-19
+
+### Documentation
+- Clarified and streamlined package overview and quick-start instructions in `README.md`.
+
 ## [0.3.0] - 2026-08-19
 
 ### Added
