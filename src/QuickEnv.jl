@@ -1212,8 +1212,6 @@ function __init__()
     is_verbose = (lowercase(env_verbose) == "true") || script_verbose
     is_silent = (lowercase(env_silent) == "true") || script_silent
 
-    diagnose_and_suggest_packages(required_packages, is_silent)
-
     if handle_forced_creation(create_env, required_packages, is_verbose, is_silent)
         warn_ignored_local_files(script_path, create_env, is_silent)
         update_active_env_description(description)
