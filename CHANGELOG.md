@@ -2,6 +2,14 @@
 
 All notable changes to the `QuickEnv` package will be documented in this file.
 
+## [0.3.0] - 2026-08-19
+
+### Added
+- Silent by default: QuickEnv now runs completely silently during normal script execution when matching existing environments. Information logs are only printed when a new environment is being configured/created or missing packages are being installed.
+- Added `verbose` mode support via inline `# verbose`, standalone `# quickenv_verbose: true`, or environment variable `QUICKENV_VERBOSE=true`.
+- Added smart package diagnosis and typo detection: automatically checks imported packages for casing mistakes (e.g., `using cairo` $\rightarrow$ `using Cairo`) and typos (e.g., `using Pltos` $\rightarrow$ `using Plots`) across local environments, stdlibs, and the Julia General Registry with zero startup overhead on valid scripts.
+- Added `examples/example_diagnostics.jl` to demonstrate package typo and casing diagnosis.
+
 ## [0.2.0] - 2026-06-04
 
 ### Added

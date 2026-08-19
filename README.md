@@ -120,9 +120,10 @@ To understand their role, it is helpful to compare the three package management 
 ## 🚀 Key features
 
 - **Implicit Code Parsing**: Reads your script on load, identifying exact imported packages (`using` and `import` statements), while ignoring comments and sub-imports.
-- **Zero-Config Matching**: Scans named global environments (located in `~/.julia/environments/`) and activates the first matching environment in milliseconds.
+- **O(1) State-Aware Hash Cache**: Caches environment resolutions and tracks `Manifest.toml` modification times for sub-millisecond startups.
+- **Bitmask Set-Cover & Fast Manifest Stitching**: Automatically finds minimal combinations of existing environments (e.g. `@plotting` + `@data`), validates transitive manifest compatibility, and fast-stitches them into `@auto_<hash>` compound environments in $<5$ ms with **zero recompilation**.
+- **Smart Diagnostics & Typo Suggestions**: Detects package casing mistakes (e.g., `using cairo` $\rightarrow$ `using Cairo`) and typos (e.g., `using Pltos` $\rightarrow$ `using Plots`) using fast-path local caching and fuzzy search against all 14,000+ packages in the General Registry with zero startup overhead on working scripts.
 - **Auto-Bootstrapping**: If no matching named environment exists, it automatically executes a headless installation (`Pkg.add`) of missing packages in the local directory or fallback named environment.
-- **Declarative Magic Comments**: Allows configure-by-comment rules directly in the file (e.g., fallback targets, environment exclusions) without syntactically altering standard Julia parsing.
 - **Low-Overhead**: Built exclusively on Julia's standard libraries (`Pkg` and `TOML`). Compiles and runs in under 10ms.
 
 ---
@@ -183,12 +184,19 @@ Sets or updates the custom description for the activated environment's `Project.
 ```
 *Note: The keyword `global` acts as a wildcard excluding standard versioned global environments (e.g., `@v1.12`).*
 
-#### 5. Silent execution (`quickenv_silent` or `QUICKENV_SILENT` environment variable)
-You can suppress all `QuickEnv` and `Pkg` environment activation logs during load time either by using a magic comment:
+#### 5. Silent by Default & Verbose Mode (`verbose` or `QUICKENV_VERBOSE`)
+By default, **QuickEnv runs completely silently** when matching existing environments. Information logs are only printed when a new environment is being created or missing packages are being installed.
+
+To enable verbose activation logs, use the `verbose` magic keyword:
 ```julia
-# quickenv_silent: true
+using QuickEnv # verbose
 ```
-Or by setting the system environment variable globally in your shell:
+Or set the system environment variable in your shell:
+```bash
+export QUICKENV_VERBOSE=true
+```
+
+To suppress all outputs including warnings and package configuration logs:
 ```bash
 export QUICKENV_SILENT=true
 ```
@@ -198,11 +206,11 @@ export QUICKENV_SILENT=true
 ## 💻 Code examples
 
 ### Example A: Global environment isolation & plotting (unified inline format)
-This script prevents itself from running in the global environment, sets `@plotting` as the fallback environment, and executes silently:
+This script prevents itself from running in the global environment and sets `@plotting` as the fallback environment:
 
 ```julia
 #!/usr/bin/env julia
-using QuickEnv # fallback: plotting, exclude: global, silent
+using QuickEnv # fallback: plotting, exclude: global
 
 using Plots
 using Cairo
@@ -217,11 +225,11 @@ end
 ```
 
 ### Example B: Dedicated named fallback & data setup (unified inline format)
-This script requests a dedicated named environment `@data`. If no environment currently contains both `DataFrames` and `CSV`, it will automatically create `@data`, download/compile the packages, and run silently:
+This script requests a dedicated named environment `@data`. If no environment currently contains both `DataFrames` and `CSV`, it will automatically create `@data`, download/compile the packages, and run:
 
 ```julia
 #!/usr/bin/env julia
-using QuickEnv # fallback: data, exclude: global, silent
+using QuickEnv # fallback: data, exclude: global
 
 using DataFrames
 using CSV
@@ -234,8 +242,8 @@ function (@main)(args)
 end
 ```
 
-### Example C: Named environment with local files warning (non-silent mode)
-This script requests the custom named environment `@plotting` without specifying the `silent` flag. If a local `Project.toml` or `Manifest.toml` exists in the script's directory, `QuickEnv` will alert you with a warning that the local directory configuration is being ignored in favor of the shared named environment:
+### Example C: Named environment with local files warning
+This script requests the custom named environment `@plotting`. If a local `Project.toml` or `Manifest.toml` exists in the script's directory, `QuickEnv` alerts you with a warning that the local directory configuration is being bypassed:
 
 ```julia
 #!/usr/bin/env julia
@@ -251,16 +259,11 @@ end
 
 *Output (if local `Project.toml` exists in the script directory)*:
 ```log
-┌ Info: QuickEnv: Found matching environment @plotting.
-└ Activating...
-
-┌ Info: QuickEnv - To silence add magic comment:
-└ 'using QuickEnv  # silent'
-
 ┌ Warning: QuickEnv: Local Project.toml or Manifest.toml exists in the
 │ script's directory, but is being ignored because named
 │ environment @plotting is activated.
 └ @ QuickEnv ~/.julia/packages/QuickEnv/.../QuickEnv.jl
+```
 
 Running script in named environment @plotting...
 ```
@@ -292,10 +295,13 @@ Running script in named environment @plotting...
 
 You can find the runnable scripts in the [examples/](examples/) directory:
 
+- [example_auto_merge.jl](examples/example_auto_merge.jl): Demonstrates autonomous compound environment creation and fast manifest stitching combining `@plotting` and `@data_test` with zero recompilation.
+- [example_cli_merge.jl](examples/example_cli_merge.jl): Demonstrates checking compatibility and merging named environments via the `jlenv` CLI tool.
 - [example_plotting.jl](examples/example_plotting.jl): Demonstrates plotting using the `@plotting` named environment. Uses the `gr()` backend and Cairo to export a PDF plot to `output/plot.pdf`.
-- [example_data.jl](examples/example_data.jl): Demonstrates data handling using the `@data` named environment. Automatically creates the environment and silently installs `DataFrames.jl` and `CSV.jl` to write to `output/data.csv`.
+- [example_data.jl](examples/example_data.jl): Demonstrates data handling using the `@data` named environment. Automatically creates the environment and installs `DataFrames.jl` and `CSV.jl` to write to `output/data.csv`.
 - [example_science.jl](examples/example_science.jl): Demonstrates forced environment creation using the `# create: science` magic comment. Automatically installs `SpecialFunctions.jl` and `LsqFit.jl` to perform a non-linear curve fit and export the result to `output/science_plot.pdf`.
 - [example_warning.jl](examples/example_warning.jl): Demonstrates the ignored local files warning interactively by automatically creating and cleaning up a dummy local Project.toml.
+- [example_diagnostics.jl](examples/example_diagnostics.jl): Demonstrates smart package typo and casing diagnosis across local environments and the General Registry.
 
 ---
 
@@ -304,7 +310,7 @@ You can find the runnable scripts in the [examples/](examples/) directory:
 To run the test suite and verify metadata parsing, environment matching, and filtering logic:
 
 ```bash
-julia --project=QuickEnv QuickEnv/test/runtests.jl
+julia --project=. test/runtests.jl
 ```
 
 ---
@@ -326,6 +332,9 @@ To make managing your custom named environments and scripts effortless, `QuickEn
 
 ### Key Features
 
+* **Fast Environment Merging (`merge`)**: Fast-stitches multiple named environments into a new unified environment.
+* **Compatibility Validator (`check-compat`)**: Checks whether multiple named environments share consistent transitive dependency versions.
+* **Cache Inspection (`cache`)**: Inspects or clears QuickEnv's resolution cache.
 * **Environment Directory Listing (`list`)**: Displays all your named environments along with custom description headers.
 * **Environment Inspection (`show`)**: Shows all registered packages and direct dependencies for a specified environment.
 * **Automatic Creation (`create`)**: Automatically scans a standalone Julia script for imported packages, creates a new named environment, and installs all the dependencies.
@@ -337,6 +346,15 @@ To make managing your custom named environments and scripts effortless, `QuickEn
 ```bash
 # List all environments and descriptions
 ./tools/jlenv.jl list
+
+# Check compatibility between environments
+./tools/jlenv.jl check-compat @plotting @data
+
+# Merge multiple environments into a new named environment
+./tools/jlenv.jl merge @plotting_data @plotting @data
+
+# View resolution cache
+./tools/jlenv.jl cache list
 
 # Show registered packages in an environment
 ./tools/jlenv.jl show @plotting

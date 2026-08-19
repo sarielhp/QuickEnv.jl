@@ -1,20 +1,19 @@
 using QuickEnv
 using Test
+using Pkg
 
 @testset "QuickEnv.jl Tests" begin
     @testset "Script Metadata Parsing" begin
         # Write a mock Julia script with magic comments (inline)
-        mock_script_content = """
-        #!/usr/bin/env julia
-
-        using QuickEnv # fallback: plotting_test, exclude: global, outdated_plotting, broken_env, silent, create: data_test, description: "Inline test description"
-        using Plots
-        import DataFrames: DataFrame
-
-        # Some comments that shouldn't impact parsing:
-        # using NotAPackage
-        # import AlsoNotAPackage
-        """
+        mock_script_content = (
+            "#!/usr/bin/env julia\n\n" *
+            "using QuickEnv # fallback: plotting_test, exclude: global, outdated_plotting, broken_env, silent, create: data_test, description: \"Inline test description\"\n" *
+            "using Plots\n" *
+            "import DataFrames: DataFrame\n\n" *
+            "# Some comments that shouldn't impact parsing:\n" *
+            "# using NotAPackage\n" *
+            "# import AlsoNotAPackage\n"
+        )
 
         # Create a temporary file
         tmp_path, io = mktemp()
@@ -23,7 +22,7 @@ using Test
             close(io)
 
             # Parse the metadata
-            pkgs, fallback, excluded, is_silent, create_env, description = QuickEnv.parse_script_metadata(
+            pkgs, fallback, excluded, is_verbose, is_silent, create_env, description = QuickEnv.parse_script_metadata(
                 tmp_path
             )
 
@@ -57,6 +56,19 @@ using Test
             rm(tmp_path)
         end
 
+        # Test Inline verbose parsing
+        mock_script_verbose = "#!/usr/bin/env julia\n" * "using QuickEnv # verbose\n"
+        tmp_path_v, io_v = mktemp()
+        try
+            write(io_v, mock_script_verbose)
+            close(io_v)
+
+            _, _, _, is_verbose_v, _, _, _ = QuickEnv.parse_script_metadata(tmp_path_v)
+            @test is_verbose_v == true
+        finally
+            rm(tmp_path_v)
+        end
+
         # Test Standalone QuickEnv.create parsing
         mock_script_standalone = """
         #!/usr/bin/env julia
@@ -68,7 +80,7 @@ using Test
             write(io_s, mock_script_standalone)
             close(io_s)
 
-            _, _, _, _, create_env_s, _ = QuickEnv.parse_script_metadata(tmp_path_s)
+            _, _, _, _, _, create_env_s, _ = QuickEnv.parse_script_metadata(tmp_path_s)
             @test create_env_s == "data_test_standalone"
         finally
             rm(tmp_path_s)
@@ -85,7 +97,7 @@ using Test
             write(io_d, mock_script_standalone_desc)
             close(io_d)
 
-            _, _, _, _, _, description_d = QuickEnv.parse_script_metadata(tmp_path_d)
+            _, _, _, _, _, _, description_d = QuickEnv.parse_script_metadata(tmp_path_d)
             @test description_d == "Standalone test description"
         finally
             rm(tmp_path_d)
@@ -102,7 +114,7 @@ using Test
             write(io_d2, mock_script_standalone_desc_short)
             close(io_d2)
 
-            _, _, _, _, _, description_d2 = QuickEnv.parse_script_metadata(tmp_path_d2)
+            _, _, _, _, _, _, description_d2 = QuickEnv.parse_script_metadata(tmp_path_d2)
             @test description_d2 == "Standalone short desc test"
         finally
             rm(tmp_path_d2)
@@ -118,7 +130,7 @@ using Test
             write(io_d3, mock_script_inline_desc_short)
             close(io_d3)
 
-            _, _, _, _, _, description_d3 = QuickEnv.parse_script_metadata(tmp_path_d3)
+            _, _, _, _, _, _, description_d3 = QuickEnv.parse_script_metadata(tmp_path_d3)
             @test description_d3 == "Inline short desc test"
         finally
             rm(tmp_path_d3)
@@ -135,7 +147,7 @@ using Test
             write(io_f, mock_script_fallback_with_desc)
             close(io_f)
 
-            _, fallback_env_f, _, _, _, description_f = QuickEnv.parse_script_metadata(
+            _, fallback_env_f, _, _, _, _, description_f = QuickEnv.parse_script_metadata(
                 tmp_path_f
             )
             @test fallback_env_f == "plotting_test"
@@ -155,7 +167,7 @@ using Test
             write(io_c, mock_script_create_with_desc)
             close(io_c)
 
-            _, _, _, _, create_env_c, description_c = QuickEnv.parse_script_metadata(
+            _, _, _, _, _, create_env_c, description_c = QuickEnv.parse_script_metadata(
                 tmp_path_c
             )
             @test create_env_c == "data_test"
@@ -230,11 +242,8 @@ using Test
             local_proj = joinpath(tmp_dir, "Project.toml")
             touch(local_proj)
 
-            # 1. Non-silent mode: should emit a warning log and an info log
-            QuickEnv.tip_printed[] = false
-            @test_logs (:warn, r"QuickEnv: Local Project.toml or Manifest.toml exists.*") (
-                :info, r"QuickEnv - To silence add magic comment.*"
-            ) begin
+            # 1. Non-silent mode: should emit a warning log
+            @test_logs (:warn, r"QuickEnv: Local Project.toml or Manifest.toml exists.*") begin
                 QuickEnv.warn_ignored_local_files(script_path, "plotting_test", false)
             end
 
@@ -244,6 +253,135 @@ using Test
             end
         finally
             rm(tmp_dir, recursive=true, force=true)
+        end
+    end
+
+    @testset "Verbose Mode vs Default Silent Behavior" begin
+        # 1. Default (is_verbose=false): activation is completely silent
+        Pkg.activate(; temp=true, io=devnull)
+        @test_logs begin
+            QuickEnv.activate_matched_env(["plotting"], false)
+        end
+
+        # 2. Verbose (is_verbose=true): activation prints info log
+        Pkg.activate(; temp=true, io=devnull)
+        @test_logs (:info, r"QuickEnv: Found matching environment @plotting.*"s) begin
+            QuickEnv.activate_matched_env(["plotting"], true)
+        end
+    end
+
+    @testset "Package Casing and Typo Diagnosis" begin
+        # 1. Levenshtein distance tests
+        @test QuickEnv.levenshtein_distance("Plots", "Plots") == 0
+        @test QuickEnv.levenshtein_distance("plots", "Plots") == 1
+        @test QuickEnv.levenshtein_distance("Pltos", "Plots") == 2
+        @test QuickEnv.levenshtein_distance("cairo", "Cairo") == 1
+
+        # 2. Known local packages discovery
+        local_pkgs = QuickEnv.get_known_local_packages()
+        @test "Base" in local_pkgs
+        @test "LinearAlgebra" in local_pkgs
+        @test "Plots" in local_pkgs
+
+        # 3. Warning on casing mismatch (e.g. 'cairo' -> 'Cairo')
+        @test_logs (:warn, r"QuickEnv: Detected package 'cairo' with incorrect casing.*Did you mean 'Cairo'?"s) begin
+            QuickEnv.diagnose_and_suggest_packages(["cairo"], false)
+        end
+
+        # 4. Warning on typo (e.g. 'Pltos' -> 'Plots')
+        @test_logs (:warn, r"QuickEnv: Package 'Pltos' not found.*Did you mean 'Plots'?"s) begin
+            QuickEnv.diagnose_and_suggest_packages(["Pltos"], false)
+        end
+
+        # 5. Fast path: no warnings on valid packages
+        @test_logs begin
+            QuickEnv.diagnose_and_suggest_packages(["Plots", "LinearAlgebra"], false)
+        end
+
+        # 6. Silent mode: no warnings even if typos exist
+        @test_logs begin
+            QuickEnv.diagnose_and_suggest_packages(["cairo", "Pltos"], true)
+        end
+    end
+
+    @testset "Canonical Key & Hashing Engine" begin
+        k1 = QuickEnv.get_canonical_key(["Plots", "Cairo"])
+        k2 = QuickEnv.get_canonical_key(["Cairo", "Plots", "Plots"])
+        @test k1 == "Cairo+Plots"
+        @test k2 == "Cairo+Plots"
+        @test k1 == k2
+
+        h1 = QuickEnv.get_cache_hash(k1)
+        h2 = QuickEnv.get_cache_hash(k2)
+        @test !isempty(h1)
+        @test h1 == h2
+    end
+
+    @testset "Bitmask Greedy Set-Cover Engine" begin
+        req = ["Plots", "Cairo", "DataFrames", "CSV", "JSON"]
+        candidates = [
+            ("plotting", ["Plots", "Cairo"]),
+            ("data", ["DataFrames", "CSV"]),
+            ("utils", ["JSON", "Dates"]),
+            ("unrelated", ["Flux", "CUDA"]),
+            ("mega", ["Plots", "Cairo", "DataFrames", "CSV", "JSON", "Flux", "Zygote", "CUDA"])
+        ]
+
+        # Should select the clean modular combination over the bloated mega environment
+        selected = QuickEnv.find_minimal_covering_envs(req, candidates)
+        @test "plotting" in selected
+        @test "data" in selected
+        @test "utils" in selected
+        @test !("unrelated" in selected)
+        @test length(selected) == 3
+
+        # Test timeout guard (timeout_sec = 0.0 forces immediate timeout return)
+        timeout_selected = QuickEnv.find_minimal_covering_envs(req, candidates; timeout_sec=0.0)
+        @test isempty(timeout_selected)
+    end
+
+    @testset "Manifest Transitive Compatibility & Stitching" begin
+        # Test existing environments if present
+        plotting_mani = joinpath(DEPOT_PATH[1], "environments", "plotting", "Manifest.toml")
+        data_mani = joinpath(DEPOT_PATH[1], "environments", "data_test", "Manifest.toml")
+
+        if isfile(plotting_mani) && isfile(data_mani)
+            compat, deps, m_deps = QuickEnv.check_manifest_compat(["plotting", "data_test"])
+            @test compat == true
+            @test haskey(deps, "Plots")
+            @test haskey(deps, "DataFrames")
+
+            # Test fast stitching
+            target_env = "test_auto_unit_stitch"
+            stitched = QuickEnv.stitch_environments(target_env, ["plotting", "data_test"], true)
+            @test stitched == true
+
+            target_proj = joinpath(DEPOT_PATH[1], "environments", target_env, "Project.toml")
+            @test isfile(target_proj)
+
+            # Cleanup
+            rm(joinpath(DEPOT_PATH[1], "environments", target_env), recursive=true, force=true)
+        end
+    end
+
+    @testset "State-Aware Cache Engine" begin
+        # 1. Update cache entry
+        req = ["Plots", "DataFrames"]
+        QuickEnv.update_cache_entry(req, "test_cache_target", ["plotting"])
+
+        # 2. Check cache hit
+        hit = QuickEnv.check_cache_hit(req)
+        # Target dir doesn't exist so should return nothing
+        @test hit === nothing
+
+        # Create target dir and test hit
+        target_dir = joinpath(DEPOT_PATH[1], "environments", "test_cache_target")
+        mkpath(target_dir)
+        try
+            hit2 = QuickEnv.check_cache_hit(req)
+            @test hit2 == "test_cache_target"
+        finally
+            rm(target_dir, recursive=true, force=true)
         end
     end
 end
