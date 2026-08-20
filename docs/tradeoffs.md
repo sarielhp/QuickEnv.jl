@@ -74,6 +74,8 @@ When a script requires packages that are only partially covered by existing envi
    * Does not create `Project.toml` or `Manifest.toml` files in script working directories unless explicitly requested via `# local`.
 6. **Typo and Casing Detection**:
    * Identifies package casing mismatches (e.g., `using cairo` vs `using Cairo`) and typos against the General Registry before failure.
+7. **Near-Zero Disk Footprint for Environments**:
+   * In Julia's content-addressed architecture, environments contain only tiny text pointers (`Project.toml` / `Manifest.toml`). Creating dozens of dedicated or auto-generated environments costs only kilobytes of disk space and duplicates zero package code or compiled binaries.
 
 ---
 

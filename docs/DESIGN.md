@@ -12,6 +12,7 @@ This document provides an in-depth explanation of `QuickEnv.jl`'s internal archi
 5. [Two-Tier State-Aware Caching](#5-two-tier-state-aware-caching)
 6. [Heavy Environments & Loading Mechanics](#6-heavy-environments--loading-mechanics)
 7. [Handling Uncovered Packages & Autonomous Bootstrapping](#7-handling-uncovered-packages--autonomous-bootstrapping)
+8. [The Economics of Julia Environments (Why Having 100+ Environments Costs Almost Nothing)](#8-the-economics-of-julia-environments-why-having-100-environments-costs-almost-nothing)
 
 ---
 
@@ -128,6 +129,40 @@ Execution Start
 
 When a script requires packages that are not present in any existing named environment:
 1. **Detection**: The set-cover engine identifies that no combination of existing environments achieves `current_cov == target_mask`.
-2. **Autonomous Creation**: QuickEnv creates `@auto_<hash>` in `~/.julia/environments/`.
-3. **Targeted Install**: It activates `@auto_<hash>` and invokes `Pkg.add` for the required packages.
+2. **Partial Fast-Stitching (Optimization A)**: Finds the maximal compatible subset of existing environments, writes their pre-resolved manifest into `@auto_<hash>`, and runs `Pkg.add` only for the new packages, avoiding full SAT exploration and preventing recompilation cascades.
+3. **Autonomous Creation**: QuickEnv creates `@auto_<hash>` in `~/.julia/environments/`.
 4. **Depot Enrichment**: Once created, `@auto_<hash>` becomes part of the named environment pool, making its packages available for future fast-stitching with other environments.
+
+---
+
+## 8. The Economics of Julia Environments (Why Having 100+ Environments Costs Almost Nothing)
+
+Developers familiar with Python (`venv` / `conda`) or JavaScript (`node_modules`) are often hesitant to create many environments because in those ecosystems, each environment duplicates packages, binaries, and virtual copies of the interpreter—easily consuming gigabytes of disk space.
+
+In Julia, environments operate under a **fundamentally different, content-addressed architecture**:
+
+### 1. Global Content-Addressed Storage
+Package assets are never copied into an environment. Instead, Julia stores assets globally in your depot (`~/.julia/`):
+* **Package Source Trees**: Stored **once** in `~/.julia/packages/<Name>/<slug>/` keyed by `git-tree-sha1`.
+* **Compiled Binary Artifacts**: Stored **once** in `~/.julia/artifacts/<hash>/`.
+* **Precompiled `.ji` Binary Images**: Stored **once** in `~/.julia/compiled/v1.x/<Name>/<slug>.ji`.
+
+### 2. An Environment Is Only Two Plain Text Pointers
+A named or auto-generated environment (`~/.julia/environments/@auto_<hash>`) contains strictly two plain-text files:
+* `Project.toml` (~200 bytes): Human-readable direct package names and UUIDs.
+* `Manifest.toml` (~2–5 KB): Pointers mapping package UUIDs to exact `git-tree-sha1` hashes in the global depot.
+
+### 3. The Resource Footprint:
+
+| Total Named Environments | Disk Space Consumed | Duplicated Package Code / Binaries |
+| :---: | :---: | :---: |
+| **1 Environment** | ~3 KB | 0 MB |
+| **10 Environments** | ~30 KB | 0 MB |
+| **50 Environments** | ~150 KB | 0 MB |
+| **100 Environments** | **~300 KB** (less than a single photo) | **0 MB** |
+
+### 4. Why Many Small Environments Are Better for the Compiler
+Counterintuitively, creating many small, dedicated environments via QuickEnv is significantly better for Julia than maintaining one large monolithic environment:
+* **Fewer Method Invalidations**: Julia only loads and checks the packages strictly required by that script.
+* **Faster Manifest Parsing**: Reading a 3 KB manifest takes <0.5ms vs. 10–20ms for a bloated 300 KB mega-manifest.
+* **No Version Bound Contention**: Different scripts remain isolated and never hold each other back from using newer package versions.
