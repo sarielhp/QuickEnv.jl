@@ -6,6 +6,7 @@
 > - **[Architecture & Design Deep-Dive](DESIGN.md)**: Fast stitching vs. stacking, bitmask solver, caching internals.
 > - **[Tradeoffs Analysis](tradeoffs.md)**: Pros vs. cons and startup performance comparison.
 > - **[`jlenv` CLI Manual](jlenv.md)**: Command reference for environment inspection and housekeeping.
+> - **[Guidelines for AI Agents](AGENTS.md)**: System prompts and instructions for AI coding assistants.
 
 ---
 

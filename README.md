@@ -161,6 +161,9 @@ QuickEnv statically analyzes `include("path/to/file.jl")` calls before execution
 ### 3. Submodule Imports
 Submodule imports (such as `using HTTP.WebSockets` or `import DataFrames.DataFrame`) are automatically parsed and mapped to their registered root packages (`HTTP`, `DataFrames`).
 
+### 4. Guidelines for AI Coding Agents
+If you use AI coding assistants (Claude, Cursor, Copilot, Gemini, Windsurf, Cline), see **[docs/AGENTS.md](docs/AGENTS.md)** for system prompt rules and instructions on writing self-contained Julia scripts without global environment pollution.
+
 > For a pros vs. cons analysis and startup performance comparison, see **[docs/tradeoffs.md](docs/tradeoffs.md)**.  
 > Details on failure handling (`atexit` self-healing invalidation) and atomic POSIX writes are documented in **[docs/DESIGN.md](docs/DESIGN.md)**.
 
