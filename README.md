@@ -57,14 +57,6 @@ Julia package environments typically follow one of three approaches:
 
 ---
 
-## Shared Named Environments in Julia
-
-A **Shared Named Environment** in Julia (such as `@plotting` or `@data`) is an isolated package environment stored in `~/.julia/environments/`.
-
-Out of the box, Julia includes the standard versioned global environment (e.g., `@v1.12`). All other named environments are custom namespaces created by the user or generated automatically by `QuickEnv`.
-
----
-
 ## Optional Configuration (Magic Comments)
 
 QuickEnv requires no configuration for typical usage. However, power users can supply optional directives via inline comments:
@@ -84,59 +76,23 @@ Common directives include:
 
 ---
 
-## Code Examples
-
-### Example A: Global Environment Isolation & Plotting
-Prevents matching the global environment and sets `@plotting` as the fallback target:
+## Example
 
 ```julia
 #!/usr/bin/env julia
-using QuickEnv # fallback: plotting, exclude: global
-
-using Plots
-using Cairo
+using QuickEnv
+using Plots, DataFrames, CSV
 
 function (@main)(args)
-    gr()
-    p = plot(1:10, rand(10), title="Isolated Plot")
-    savefig(p, "output/plot.pdf")
-    println("Saved plot to output/plot.pdf")
+    df = DataFrame(time = 1:10, signal = sin.(1:10))
+    p = plot(df.time, df.signal, title="Autonomous QuickEnv Plot")
+    savefig(p, "output.pdf")
+    println("Saved plot to output.pdf inside an isolated environment.")
     return 0
 end
 ```
 
-### Example B: Dedicated Data Workflow
-Requests `@data` as the fallback named environment:
-
-```julia
-#!/usr/bin/env julia
-using QuickEnv # fallback: data, exclude: global
-
-using DataFrames
-using CSV
-
-function (@main)(args)
-    df = DataFrame(A = 1:5, B = rand(5))
-    CSV.write("output/data.csv", df)
-    println("Saved data to output/data.csv")
-    return 0
-end
-```
-
-### Example C: Local Project Coexistence Warning
-When activating a shared named environment while local project files (`Project.toml` / `Manifest.toml`) exist in the script directory, QuickEnv displays an informational warning to ensure intent is clear:
-
-```julia
-#!/usr/bin/env julia
-using QuickEnv # fallback: plotting, exclude: global
-
-using Plots
-
-function (@main)(args)
-    println("Running in @plotting despite local Project.toml present...")
-    return 0
-end
-```
+> For additional specialized examples (fallback overrides, warning handling, typo diagnostics), see the **[examples/](examples/)** directory and the **[User Guide](docs/README.md)**.
 
 ---
 
