@@ -2,6 +2,12 @@
 
 All notable changes to the `QuickEnv` package will be documented in this file.
 
+## [0.4.1] - 2026-08-20
+
+### Documentation
+- Refined opening description in `README.md` to highlight the set-and-forget setup and link directly to empirical runtime and disk space overhead benchmarks.
+- Streamlined configuration section and cross-script reuse examples.
+
 ## [0.4.0] - 2026-08-20
 
 ### Added

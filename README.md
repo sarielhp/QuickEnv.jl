@@ -4,9 +4,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Julia Version](https://img.shields.io/badge/julia-v1.10+-8A2BE2.svg)](https://julialang.org/)
 
-`QuickEnv.jl` provides a **set-and-forget environment workflow** for standalone Julia scripts—handling dependency discovery, fast manifest stitching, and isolated project activation behind the scenes without ever polluting your global environment.
+`QuickEnv.jl` provides a **set-and-forget environment setup** for standalone Julia scripts.
 
-After installing `QuickEnv` once in your global environment (`@v1.x`), simply add `using QuickEnv` to the top of any standalone script. QuickEnv inspects your script's imports, discovers or fast-stitches a matching shared environment, installs any missing packages into isolated environments, and activates everything transparently before your code runs.
+The overhead is minimal, both in **[runtime](docs/tradeoffs.md#1-startup-performance-on-cached-runs-second-run)** (~47 ms on cached runs) and **[disk space](docs/DESIGN.md#8-the-economics-of-julia-environments-why-having-100-environments-costs-almost-nothing)** (~3 KB per environment).
+
+After installing `QuickEnv` once in your global environment (`@v1.x`), simply add `using QuickEnv` to the top of any standalone script. QuickEnv automatically inspects your imports, discovers or fast-stitches a matching shared environment, installs any missing packages into isolated environments, and activates the project before your code runs—**without ever modifying your global environment**.
 
 > **Zero Friction, Zero Pollution**: Run standalone scripts (`julia script.jl` or `./script.jl`) with automatic environment resolution while keeping your global `@v1.x` environment completely pristine and conflict-free.
 

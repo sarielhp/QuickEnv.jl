@@ -1,20 +1,19 @@
-### QuickEnv.jl v0.4.0 Release
+### QuickEnv.jl v0.4.1 Release
 
-A new version of **QuickEnv.jl v0.4.0** was released!
+A new version of **QuickEnv.jl v0.4.1** was released!
 
 #### Key Highlights & Improvements:
 
-- **Partial Fast Stitching (Optimization A)**: When a script requires a mix of existing and brand new packages, QuickEnv pre-stitches the known packages into the target environment in `<2ms`, then runs `Pkg.add` only on the missing packages. This saves up to 37% resolution time on cold starts and guarantees zero recompilation of base packages.
+- **Set-and-Forget Architecture**: Effortless automatic environment management with minimal overhead: **~47 ms** on cached runs and **~3 KB** per environment.
+- **Partial Fast Stitching (Optimization A)**: Pre-stitches known dependency manifests into target environments in `<2ms`, running `Pkg.add` only on missing packages to speed up cold resolution by up to 37% with zero recompilation cascades.
 - **Enhanced Reliability & Bug Fixes**:
-  - Fixed `# local` mode to use native project activation (`Base.set_active_project`) without loading `Pkg`.
-  - Added cache corruption recovery to safely handle malformed cache entries.
-  - Switched script cache to exact `mtime` timestamp checking.
-  - Added debug logging across all error catch blocks.
-- **Comprehensive Documentation Suite**:
-  - `docs/DESIGN.md`: Architecture deep-dive on fast stitching vs. stacking, bitmask set-cover math, and caching internals.
-  - `docs/tradeoffs.md`: Pros vs. cons analysis and startup benchmark comparison.
+  - Native local project activation (`# local`) without loading `Pkg`.
+  - Hardened cache corruption recovery and exact timestamp comparisons.
+  - Complete error traceability with structured debug logging.
+- **Modular Documentation Suite**:
+  - `docs/DESIGN.md`: Architecture deep-dive on set-cover math, fast stitching, and environment economics.
+  - `docs/tradeoffs.md`: Objective startup performance benchmarks and comparisons.
   - `docs/jlenv.md`: Complete CLI manual for environment inspection and housekeeping.
-- **Expanded Test Suite**: 116 passing tests covering partial set-cover, mock manifest stitching, corrupted cache recovery, and diagnostics.
 
 #### Quick Start:
 
@@ -33,4 +32,4 @@ using Plots, DataFrames
 ```
 
 - **GitHub Repository**: https://github.com/sarielhp/QuickEnv.jl
-- **Release Notes**: https://github.com/sarielhp/QuickEnv.jl/releases/tag/v0.4.0
+- **Release Notes**: https://github.com/sarielhp/QuickEnv.jl/releases/tag/v0.4.1
