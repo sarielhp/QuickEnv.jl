@@ -76,20 +76,33 @@ Common directives include:
 
 ---
 
-## Example
+## Example: Cross-Script Environment Reuse
 
+QuickEnv builds a compounding pool of isolated environments. Once an environment is bootstrapped, future scripts in any directory reuse it automatically:
+
+### Step 1: Run your first script (`analyze_data.jl`)
 ```julia
 #!/usr/bin/env julia
 using QuickEnv
 using Plots, DataFrames, CSV
 
-function (@main)(args)
-    df = DataFrame(time = 1:10, signal = sin.(1:10))
-    p = plot(df.time, df.signal, title="Autonomous QuickEnv Plot")
-    savefig(p, "output.pdf")
-    println("Saved plot to output.pdf inside an isolated environment.")
-    return 0
-end
+# First execution: QuickEnv automatically bootstraps an isolated environment
+# containing Plots, DataFrames, and CSV without touching your global environment.
+df = DataFrame(time = 1:10, signal = sin.(1:10))
+p = plot(df.time, df.signal, title="Data Analysis")
+savefig(p, "analysis.pdf")
+```
+
+### Step 2: Later, run a second script (`quick_plot.jl`) anywhere on your machine
+```julia
+#!/usr/bin/env julia
+using QuickEnv
+using Plots
+
+# Immediate launch (<1ms): QuickEnv detects that Plots is already satisfied
+# by the environment created in Step 1—zero download, zero solve, zero recompilation.
+p = plot(1:100, rand(100), title="Quick Plot")
+savefig(p, "quick.pdf")
 ```
 
 > For additional specialized examples (fallback overrides, warning handling, typo diagnostics), see the **[examples/](examples/)** directory and the **[User Guide](docs/README.md)**.
