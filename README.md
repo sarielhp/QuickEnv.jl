@@ -31,7 +31,7 @@ Pkg.add(url="https://github.com/sarielhp/QuickEnv.jl.git")
 using QuickEnv
 using Plots, DataFrames
 
-# Rest of your program...
+# Rest of your script...
 ```
 
 When you execute `julia your_script.jl` or `./your_script.jl`:

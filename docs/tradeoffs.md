@@ -16,7 +16,7 @@ This document outlines the practical tradeoffs, advantages, and limitations of u
 | Plain Julia (`julia --project=@env script.jl`) | ~210 ms | Baseline |
 | QuickEnv (`julia script.jl` with `using QuickEnv`) | ~258 ms | **+47 ms** (~22% on empty startup) |
 
-> **Summary**: Running a program for the second time is faster without `QuickEnv` if the exact `--project` flag is provided manually. The difference is approximately **47 milliseconds**, which represents the cost of loading `TOML` and the `QuickEnv` module. For scripts that load substantial packages (e.g. `Plots`, `DataFrames`) or perform multi-second computations, this 47 ms difference represents a small fraction of total runtime.
+> **Summary**: Running a script for the second time is faster without `QuickEnv` if the exact `--project` flag is provided manually. The difference is approximately **47 milliseconds**, which represents the cost of loading `TOML` and the `QuickEnv` module. For scripts that load substantial packages (e.g. `Plots`, `DataFrames`) or perform multi-second computations, this 47 ms difference represents a small fraction of total runtime.
 
 ---
 
