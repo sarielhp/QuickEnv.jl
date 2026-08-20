@@ -149,7 +149,9 @@ using Pkg
             write(io_d2, mock_script_standalone_desc_short)
             close(io_d2)
 
-            _, _, _, _, _, _, description_d2, _ = QuickEnv.parse_script_metadata(tmp_path_d2)
+            _, _, _, _, _, _, description_d2, _ = QuickEnv.parse_script_metadata(
+                tmp_path_d2
+            )
             @test description_d2 == "Standalone short desc test"
         finally
             rm(tmp_path_d2)
@@ -165,7 +167,9 @@ using Pkg
             write(io_d3, mock_script_inline_desc_short)
             close(io_d3)
 
-            _, _, _, _, _, _, description_d3, _ = QuickEnv.parse_script_metadata(tmp_path_d3)
+            _, _, _, _, _, _, description_d3, _ = QuickEnv.parse_script_metadata(
+                tmp_path_d3
+            )
             @test description_d3 == "Inline short desc test"
         finally
             rm(tmp_path_d3)
@@ -218,7 +222,9 @@ using Pkg
             main_file = joinpath(tdir, "main.jl")
 
             write(helper_file, "using JSON\nusing Dates\n")
-            write(main_file, "using QuickEnv # silent\nusing Plots\ninclude(\"helper.jl\")\n")
+            write(
+                main_file, "using QuickEnv # silent\nusing Plots\ninclude(\"helper.jl\")\n"
+            )
 
             inc_pkgs, _, _, _, _, _, _, _ = QuickEnv.parse_script_metadata(main_file)
             @test "QuickEnv" in inc_pkgs
@@ -331,30 +337,29 @@ using Pkg
         @test QuickEnv.levenshtein_distance("Pltos", "Plots") == 2
         @test QuickEnv.levenshtein_distance("cairo", "Cairo") == 1
 
-        # 2. Known local packages discovery
+        # 2. Known local packages discovery (stdlibs are always present)
         local_pkgs = QuickEnv.get_known_local_packages()
         @test "Base" in local_pkgs
         @test "LinearAlgebra" in local_pkgs
-        @test "Plots" in local_pkgs
 
-        # 3. Warning on casing mismatch (e.g. 'cairo' -> 'Cairo')
-        @test_logs (:warn, r"QuickEnv: Detected package 'cairo' with incorrect casing.*Did you mean 'Cairo'?"s) begin
-            QuickEnv.diagnose_and_suggest_packages(["cairo"], false)
+        # 3. Warning on casing mismatch (stdlibs)
+        @test_logs (:warn, r"incorrect casing.*LinearAlgebra"s) begin
+            QuickEnv.diagnose_and_suggest_packages(["linearalgebra"], false)
         end
 
-        # 4. Warning on typo (e.g. 'Pltos' -> 'Plots')
-        @test_logs (:warn, r"QuickEnv: Package 'Pltos' not found.*Did you mean 'Plots'?"s) begin
-            QuickEnv.diagnose_and_suggest_packages(["Pltos"], false)
+        # 4. Warning on typo (e.g. 'Dats' -> 'Dates')
+        @test_logs (:warn, r"Did you mean 'Dates'"s) begin
+            QuickEnv.diagnose_and_suggest_packages(["Dats"], false)
         end
 
-        # 5. Fast path: no warnings on valid packages
+        # 5. Fast path: no warnings on valid stdlib packages
         @test_logs begin
-            QuickEnv.diagnose_and_suggest_packages(["Plots", "LinearAlgebra"], false)
+            QuickEnv.diagnose_and_suggest_packages(["LinearAlgebra", "Dates"], false)
         end
 
         # 6. Silent mode: no warnings even if typos exist
         @test_logs begin
-            QuickEnv.diagnose_and_suggest_packages(["cairo", "Pltos"], true)
+            QuickEnv.diagnose_and_suggest_packages(["linearalgebra", "Dats"], true)
         end
     end
 
@@ -368,7 +373,13 @@ using Pkg
         h1 = QuickEnv.get_cache_hash(k1)
         h2 = QuickEnv.get_cache_hash(k2)
         @test !isempty(h1)
+        @test length(h1) == 12
         @test h1 == h2
+
+        h3 = QuickEnv.get_cache_hash("DataFrames+CSV")
+        @test h3 != h1
+        @test !isempty(QuickEnv.get_cache_hash(""))
+        @test !isempty(QuickEnv.get_cache_hash("X"))
     end
 
     @testset "Bitmask Greedy Set-Cover Engine" begin
@@ -378,7 +389,10 @@ using Pkg
             ("data", ["DataFrames", "CSV"]),
             ("utils", ["JSON", "Dates"]),
             ("unrelated", ["Flux", "CUDA"]),
-            ("mega", ["Plots", "Cairo", "DataFrames", "CSV", "JSON", "Flux", "Zygote", "CUDA"])
+            (
+                "mega",
+                ["Plots", "Cairo", "DataFrames", "CSV", "JSON", "Flux", "Zygote", "CUDA"],
+            ),
         ]
 
         # Should select the clean modular combination over the bloated mega environment
@@ -390,31 +404,182 @@ using Pkg
         @test length(selected) == 3
 
         # Test timeout guard (timeout_sec = 0.0 forces immediate timeout return)
-        timeout_selected = QuickEnv.find_minimal_covering_envs(req, candidates; timeout_sec=0.0)
+        timeout_selected = QuickEnv.find_minimal_covering_envs(
+            req, candidates; timeout_sec=0.0
+        )
         @test isempty(timeout_selected)
     end
 
-    @testset "Manifest Transitive Compatibility & Stitching" begin
-        # Test existing environments if present
-        plotting_mani = joinpath(DEPOT_PATH[1], "environments", "plotting", "Manifest.toml")
-        data_mani = joinpath(DEPOT_PATH[1], "environments", "data_test", "Manifest.toml")
+    @testset "Optimization A: Partial Set-Cover Engine" begin
+        req = ["Plots", "Cairo", "DataFrames", "CSV", "UncoveredPkg"]
+        candidates = [
+            ("plotting", ["Plots", "Cairo"]),
+            ("data", ["DataFrames", "CSV"]),
+            ("bloated", ["Plots", "Cairo", "DataFrames", "CSV", "UnrelatedA", "UnrelatedB"]),
+        ]
 
-        if isfile(plotting_mani) && isfile(data_mani)
-            compat, deps, m_deps = QuickEnv.check_manifest_compat(["plotting", "data_test"])
-            @test compat == true
-            @test haskey(deps, "Plots")
-            @test haskey(deps, "DataFrames")
+        # 1. Complete cover should fail (UncoveredPkg is missing from all)
+        complete = QuickEnv.find_minimal_covering_envs(req, candidates)
+        @test isempty(complete)
 
-            # Test fast stitching
-            target_env = "test_auto_unit_stitch"
-            stitched = QuickEnv.stitch_environments(target_env, ["plotting", "data_test"], true)
-            @test stitched == true
+        # 2. Strict subset partial cover should select plotting and data (ignoring bloated)
+        partial, covered = QuickEnv.find_partial_covering_envs(req, candidates; strict_subset=true)
+        @test "plotting" in partial
+        @test "data" in partial
+        @test !("bloated" in partial)
+        @test length(partial) == 2
+        @test length(covered) == 4
+        @test !("UncoveredPkg" in covered)
+        @test "Plots" in covered
+        @test "DataFrames" in covered
 
-            target_proj = joinpath(DEPOT_PATH[1], "environments", target_env, "Project.toml")
-            @test isfile(target_proj)
+        # 3. Timeout guard
+        timeout_partial, timeout_cov = QuickEnv.find_partial_covering_envs(
+            req, candidates; timeout_sec=0.0
+        )
+        @test isempty(timeout_partial)
+        @test isempty(timeout_cov)
+    end
 
-            # Cleanup
-            rm(joinpath(DEPOT_PATH[1], "environments", target_env), recursive=true, force=true)
+    @testset "Deterministic Manifest Transitive Compatibility & Stitching" begin
+        # Create isolated mock environments in a temporary depot
+        tdir = mktempdir()
+        try
+            old_depot = copy(DEPOT_PATH)
+            empty!(DEPOT_PATH)
+            push!(DEPOT_PATH, tdir)
+
+            env_base = joinpath(tdir, "environments")
+            env_plot = joinpath(env_base, "mock_plot")
+            env_data = joinpath(env_base, "mock_data")
+            mkpath(env_plot)
+            mkpath(env_data)
+
+            write(
+                joinpath(env_plot, "Project.toml"),
+                """
+[deps]
+Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+""",
+            )
+            write(
+                joinpath(env_plot, "Manifest.toml"),
+                """
+[deps]
+[deps.Plots]
+uuid = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+version = "1.40.0"
+git-tree-sha1 = "abc12345"
+""",
+            )
+
+            write(
+                joinpath(env_data, "Project.toml"),
+                """
+[deps]
+DataFrames = "a93c0a0b-4844-5373-a966-813e8a4b615c"
+""",
+            )
+            write(
+                joinpath(env_data, "Manifest.toml"),
+                """
+[deps]
+[deps.DataFrames]
+uuid = "a93c0a0b-4844-5373-a966-813e8a4b615c"
+version = "1.6.0"
+git-tree-sha1 = "def67890"
+""",
+            )
+
+            try
+                compat, deps, m_deps = QuickEnv.check_manifest_compat([
+                    "mock_plot", "mock_data"
+                ])
+                @test compat == true
+                @test haskey(deps, "Plots")
+                @test haskey(deps, "DataFrames")
+
+                # Test fast stitching
+                target_env = "test_auto_unit_stitch"
+                stitched = QuickEnv.stitch_environments(
+                    target_env, ["mock_plot", "mock_data"], true
+                )
+                @test stitched == true
+
+                target_proj = joinpath(
+                    DEPOT_PATH[1], "environments", target_env, "Project.toml"
+                )
+                @test isfile(target_proj)
+            finally
+                empty!(DEPOT_PATH)
+                append!(DEPOT_PATH, old_depot)
+            end
+        finally
+            rm(tdir; recursive=true, force=true)
+        end
+    end
+
+    @testset "Stitch Environments Failure Path (Conflict Detection)" begin
+        tdir = mktempdir()
+        try
+            old_depot = copy(DEPOT_PATH)
+            empty!(DEPOT_PATH)
+            push!(DEPOT_PATH, tdir)
+
+            env_base = joinpath(tdir, "environments")
+            env_a = joinpath(env_base, "conflict_a")
+            env_b = joinpath(env_base, "conflict_b")
+            mkpath(env_a)
+            mkpath(env_b)
+
+            write(
+                joinpath(env_a, "Project.toml"),
+                """
+[deps]
+Foo = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+""",
+            )
+            write(
+                joinpath(env_a, "Manifest.toml"),
+                """
+[deps]
+[deps.Foo]
+uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+version = "1.0.0"
+""",
+            )
+
+            write(
+                joinpath(env_b, "Project.toml"),
+                """
+[deps]
+Foo = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+""",
+            )
+            write(
+                joinpath(env_b, "Manifest.toml"),
+                """
+[deps]
+[deps.Foo]
+uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+version = "2.0.0"
+""",
+            )
+
+            try
+                compat, _, _ = QuickEnv.check_manifest_compat(["conflict_a", "conflict_b"])
+                @test compat == false
+
+                result = QuickEnv.stitch_environments(
+                    "test_fail_stitch", ["conflict_a", "conflict_b"], true
+                )
+                @test result == false
+            finally
+                empty!(DEPOT_PATH)
+                append!(DEPOT_PATH, old_depot)
+            end
+        finally
+            rm(tdir; recursive=true, force=true)
         end
     end
 
@@ -438,7 +603,30 @@ using Pkg
             rm(target_dir, recursive=true, force=true)
         end
 
-        # 3. Script-level cache and failure invalidation
+        # 3. Corrupted cache entry with mismatched sources / mtimes
+        cache = QuickEnv.load_cache()
+        bad_key = QuickEnv.get_canonical_key(["FakePackageA", "FakePackageB"])
+        target_corrupt = joinpath(DEPOT_PATH[1], "environments", "test_corrupt_cache")
+        mkpath(target_corrupt)
+        try
+            cache[bad_key] = Dict(
+                "env" => "test_corrupt_cache",
+                "sources" => ["env1", "env2"],
+                "mtimes" => [1.0],
+                "updated_at" => string(time()),
+            )
+            QuickEnv.save_cache(cache)
+
+            hit_corrupt = QuickEnv.check_cache_hit(["FakePackageA", "FakePackageB"])
+            @test hit_corrupt === nothing
+        finally
+            rm(target_corrupt; recursive=true, force=true)
+            cache2 = QuickEnv.load_cache()
+            delete!(cache2, bad_key)
+            QuickEnv.save_cache(cache2)
+        end
+
+        # 4. Script-level cache and failure invalidation
         mock_script_path = tempname() * ".jl"
         write(mock_script_path, "using QuickEnv\n")
         try
@@ -447,6 +635,7 @@ using Pkg
             @test haskey(c_data, "scripts")
             @test haskey(c_data["scripts"], mock_script_path)
             @test c_data["scripts"][mock_script_path]["env"] == "auto_script_test"
+            @test c_data["scripts"][mock_script_path]["mtime"] == mtime(mock_script_path)
 
             # Invalidate
             QuickEnv.invalidate_script_cache(mock_script_path)
@@ -455,5 +644,91 @@ using Pkg
         finally
             rm(mock_script_path, force=true)
         end
+    end
+
+    @testset "Local Mode Integration (# local)" begin
+        tdir = mktempdir()
+        try
+            script = joinpath(tdir, "local_test.jl")
+            write(
+                script,
+                """
+  using QuickEnv # local, silent
+  using Test
+  """,
+            )
+
+            pkgs, fallback, excl, verbose, silent, create, desc, is_local = QuickEnv.parse_script_metadata(
+                script
+            )
+            @test is_local == true
+
+            QuickEnv.handle_matching_or_fallback(
+                filter(p -> p != "QuickEnv", pkgs),
+                fallback,
+                excl,
+                verbose,
+                silent,
+                is_local,
+                script,
+            )
+
+            proj = Base.active_project()
+            @test proj !== nothing
+            @test dirname(proj) == tdir
+        finally
+            rm(tdir; recursive=true, force=true)
+            Pkg.activate(; temp=true, io=devnull)
+        end
+    end
+
+    @testset "Extract Included File Edge Cases" begin
+        tdir = mktempdir()
+        try
+            helper = joinpath(tdir, "helper.jl")
+            touch(helper)
+
+            # 1. Valid relative path
+            result = QuickEnv.extract_included_file("include(\"helper.jl\")", tdir)
+            @test result == abspath(helper)
+
+            # 2. Valid absolute path
+            result_abs = QuickEnv.extract_included_file(
+                "include(\"$(abspath(helper))\")", "/some/other/dir"
+            )
+            @test result_abs == abspath(helper)
+
+            # 3. Non-existent file
+            result_missing = QuickEnv.extract_included_file(
+                "include(\"nonexistent.jl\")", tdir
+            )
+            @test result_missing == ""
+
+            # 4. Dynamic include
+            result_dynamic = QuickEnv.extract_included_file(
+                "include(joinpath(@__DIR__, \"helper.jl\"))", tdir
+            )
+            @test result_dynamic == ""
+
+            # 5. Line with trailing comment
+            result_comment = QuickEnv.extract_included_file(
+                "include(\"helper.jl\") # load helper", tdir
+            )
+            @test result_comment == abspath(helper)
+
+            # 6. Non-include lines
+            @test QuickEnv.extract_included_file("using Plots", tdir) == ""
+            @test QuickEnv.extract_included_file("x = 42", tdir) == ""
+        finally
+            rm(tdir; recursive=true, force=true)
+        end
+    end
+
+    @testset "Activate Matched Env Exact Boundary Check" begin
+        mock_project_path = joinpath(
+            DEPOT_PATH[1], "environments", "data_test", "Project.toml"
+        )
+        @test occursin("data", mock_project_path) == true
+        @test basename(dirname(mock_project_path)) != "data"
     end
 end

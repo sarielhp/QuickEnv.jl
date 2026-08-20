@@ -23,22 +23,28 @@ end
 
 function activate_shared_env(env_name::String)
     env_dir = joinpath(DEPOT_PATH[1], "environments", env_name)
-    proj_file = isfile(joinpath(env_dir, "JuliaProject.toml")) ?
-        joinpath(env_dir, "JuliaProject.toml") : joinpath(env_dir, "Project.toml")
+    proj_file = if isfile(joinpath(env_dir, "JuliaProject.toml"))
+        joinpath(env_dir, "JuliaProject.toml")
+    else
+        joinpath(env_dir, "Project.toml")
+    end
     if !isfile(proj_file)
         mkpath(env_dir)
         touch(proj_file)
     end
-    Base.set_active_project(proj_file)
+    return Base.set_active_project(proj_file)
 end
 
 function activate_local_dir_env(dir_path::String)
-    proj_file = isfile(joinpath(dir_path, "JuliaProject.toml")) ?
-        joinpath(dir_path, "JuliaProject.toml") : joinpath(dir_path, "Project.toml")
+    proj_file = if isfile(joinpath(dir_path, "JuliaProject.toml"))
+        joinpath(dir_path, "JuliaProject.toml")
+    else
+        joinpath(dir_path, "Project.toml")
+    end
     if !isfile(proj_file)
         touch(proj_file)
     end
-    Base.set_active_project(proj_file)
+    return Base.set_active_project(proj_file)
 end
 
 # =============================================================================
@@ -58,7 +64,8 @@ function get_canonical_key(packages::Vector{String})
 end
 
 function get_cache_hash(key::String)
-    return string(hash(key), base=16)[1:min(12, length(string(hash(key), base=16)))]
+    h = string(hash(key); base=16)
+    return h[1:min(12, length(h))]
 end
 
 function load_cache()
@@ -66,24 +73,26 @@ function load_cache()
     if isfile(cfile)
         try
             return TOML.parsefile(cfile)
-        catch
-            return Dict{String, Any}()
+        catch e
+            @debug "QuickEnv: Failed to parse cache file" file=cfile exception=e
+            return Dict{String,Any}()
         end
     end
-    return Dict{String, Any}()
+    return Dict{String,Any}()
 end
 
-function save_cache(cache_data::Dict{String, Any})
+function save_cache(cache_data::Dict{String,Any})
     cdir = get_cache_dir()
     mkpath(cdir)
     cfile = get_cache_file()
     tmpfile = cfile * ".tmp." * string(getpid())
     try
         open(tmpfile, "w") do io
-            TOML.print(io, cache_data)
+            return TOML.print(io, cache_data)
         end
         mv(tmpfile, cfile; force=true)
-    catch
+    catch e
+        @debug "QuickEnv: Failed to save cache file" file=cfile exception=e
         isfile(tmpfile) && rm(tmpfile; force=true)
     end
 end
@@ -101,16 +110,18 @@ function check_script_cache_hit(script_path::String)
     !isfile(script_path) && return nothing
 
     cache = load_cache()
-    scripts_table = get(cache, "scripts", Dict{String, Any}())
+    scripts_table = get(cache, "scripts", Dict{String,Any}())
     !haskey(scripts_table, script_path) && return nothing
 
     entry = scripts_table[script_path]
     cached_mtime = get(entry, "mtime", 0.0)
     current_mtime = mtime(script_path)
-    if abs(cached_mtime - current_mtime) < 1e-3
+    if cached_mtime == current_mtime
         target_env = get(entry, "env", "")
         if !isempty(target_env)
-            target_proj = joinpath(DEPOT_PATH[1], "environments", target_env, "Project.toml")
+            target_proj = joinpath(
+                DEPOT_PATH[1], "environments", target_env, "Project.toml"
+            )
             if isfile(target_proj)
                 return target_env
             end
@@ -124,14 +135,12 @@ function update_script_cache_entry(script_path::String, env_name::String)
     !isfile(script_path) && return nothing
 
     cache = load_cache()
-    scripts_table = get(cache, "scripts", Dict{String, Any}())
-    scripts_table[script_path] = Dict{String, Any}(
-        "mtime" => mtime(script_path),
-        "env" => env_name,
-        "updated_at" => string(time())
+    scripts_table = get(cache, "scripts", Dict{String,Any}())
+    scripts_table[script_path] = Dict{String,Any}(
+        "mtime" => mtime(script_path), "env" => env_name, "updated_at" => string(time())
     )
     cache["scripts"] = scripts_table
-    save_cache(cache)
+    return save_cache(cache)
 end
 
 """
@@ -144,7 +153,7 @@ modified multi-file dependencies trigger a fresh resolution.
 function invalidate_script_cache(script_path::String)
     isempty(script_path) && return nothing
     cache = load_cache()
-    scripts_table = get(cache, "scripts", Dict{String, Any}())
+    scripts_table = get(cache, "scripts", Dict{String,Any}())
     if haskey(scripts_table, script_path)
         delete!(scripts_table, script_path)
         cache["scripts"] = scripts_table
@@ -177,12 +186,13 @@ function check_cache_hit(required_packages::Vector{String})
     !isdir(target_dir) && return nothing
 
     # Verify all source environments still exist with matching mtimes
-    if length(sources) == length(cached_mtimes)
-        for i in 1:length(sources)
-            s_manifest = joinpath(DEPOT_PATH[1], "environments", sources[i], "Manifest.toml")
-            if !isfile(s_manifest) || mtime(s_manifest) != cached_mtimes[i]
-                return nothing # Cache stale!
-            end
+    if length(sources) != length(cached_mtimes)
+        return nothing # Corrupted cache entry
+    end
+    for i in 1:length(sources)
+        s_manifest = joinpath(DEPOT_PATH[1], "environments", sources[i], "Manifest.toml")
+        if !isfile(s_manifest) || mtime(s_manifest) != cached_mtimes[i]
+            return nothing # Cache stale!
         end
     end
 
@@ -206,9 +216,9 @@ function update_cache_entry(
         "env" => target_env,
         "sources" => source_envs,
         "mtimes" => mtimes,
-        "updated_at" => string(time())
+        "updated_at" => string(time()),
     )
-    save_cache(cache)
+    return save_cache(cache)
 end
 
 # =============================================================================
@@ -229,7 +239,7 @@ block script execution.
 """
 function find_minimal_covering_envs(
     required_pkgs::Vector{String},
-    candidate_envs::Vector{Tuple{String, Vector{String}}};
+    candidate_envs::Vector{Tuple{String,Vector{String}}};
     timeout_sec::Float64=1.0,
 )
     start_time = time()
@@ -238,7 +248,7 @@ function find_minimal_covering_envs(
     target_mask = (UInt64(1) << n) - 1
 
     # Convert candidate environments to bitmasks and compute extraneous count
-    env_info = Tuple{String, UInt64, Int}[] # (name, mask, extra_count)
+    env_info = Tuple{String,UInt64,Int}[] # (name, mask, extra_count)
     for (name, pkgs) in candidate_envs
         if (time() - start_time) > timeout_sec
             return String[]
@@ -291,6 +301,89 @@ function find_minimal_covering_envs(
     return current_cov == target_mask ? selected : String[]
 end
 
+"""
+    find_partial_covering_envs(
+        required_pkgs::Vector{String},
+        candidate_envs::Vector{Tuple{String,Vector{String}}};
+        timeout_sec::Float64=1.0,
+        strict_subset::Bool=true,
+    ) -> Tuple{Vector{String}, Vector{String}}
+
+Given required packages and available candidate environments, use hardware bitmasks
+to find a maximal compatible subset of environments whose packages are strictly contained
+in `required_pkgs` (when `strict_subset=true`). Starts from the greedy solution (adding
+the environment covering the largest number of uncovered packages).
+Returns `(selected_covering_envs, covered_packages)`.
+"""
+function find_partial_covering_envs(
+    required_pkgs::Vector{String},
+    candidate_envs::Vector{Tuple{String,Vector{String}}};
+    timeout_sec::Float64=1.0,
+    strict_subset::Bool=true,
+)
+    start_time = time()
+    n = length(required_pkgs)
+    n > 64 && return String[], String[]
+    req_set = Set(required_pkgs)
+
+    valid_candidates = Tuple{String,UInt64,Int}[] # (name, mask, extra_count)
+    for (name, pkgs) in candidate_envs
+        if (time() - start_time) > timeout_sec
+            return String[], String[]
+        end
+        if strict_subset && !all(p -> p in req_set, pkgs)
+            continue
+        end
+
+        mask = UInt64(0)
+        matched_count = 0
+        for (i, p) in enumerate(required_pkgs)
+            if p in pkgs
+                mask |= (UInt64(1) << (i - 1))
+                matched_count += 1
+            end
+        end
+        if mask > 0
+            extra_count = length(pkgs) - matched_count
+            push!(valid_candidates, (name, mask, extra_count))
+        end
+    end
+
+    isempty(valid_candidates) && return String[], String[]
+
+    # Greedy seed initialization: sort by newly coverable packages descending, then least extraneous
+    sort!(valid_candidates, by = c -> (count_ones(c[2]), -c[3]), rev=true)
+
+    selected = String[]
+    current_cov = UInt64(0)
+
+    for (name, mask, _) in valid_candidates
+        if (time() - start_time) > timeout_sec
+            break
+        end
+        gain = count_ones(mask & ~current_cov)
+        if gain > 0
+            # Test manifest compatibility before adding this environment
+            test_selected = copy(selected)
+            push!(test_selected, name)
+            compat, _, _ = check_manifest_compat(test_selected)
+            if compat
+                push!(selected, name)
+                current_cov |= mask
+            end
+        end
+    end
+
+    covered_pkgs = String[]
+    for i in 1:n
+        if (current_cov & (UInt64(1) << (i - 1))) != 0
+            push!(covered_pkgs, required_pkgs[i])
+        end
+    end
+
+    return selected, covered_pkgs
+end
+
 # =============================================================================
 # Manifest Transitive Compatibility Validator & Fast Stitching
 # =============================================================================
@@ -303,8 +396,8 @@ dependencies in their Manifest.toml files have identical UUIDs, versions, and
 git-tree-sha1 hashes. Standard libraries (in Sys.STDLIB) are validated by UUID.
 """
 function check_manifest_compat(env_names::Vector{String})
-    merged_deps = Dict{String, Any}()
-    merged_manifest_deps = Dict{String, Any}()
+    merged_deps = Dict{String,Any}()
+    merged_manifest_deps = Dict{String,Any}()
 
     for env_name in env_names
         env_dir = joinpath(DEPOT_PATH[1], "environments", env_name)
@@ -315,10 +408,11 @@ function check_manifest_compat(env_names::Vector{String})
         if isfile(proj_file)
             try
                 p_data = TOML.parsefile(proj_file)
-                for (k, v) in get(p_data, "deps", Dict{String, Any}())
+                for (k, v) in get(p_data, "deps", Dict{String,Any}())
                     merged_deps[k] = v
                 end
-            catch
+            catch e
+                @debug "QuickEnv: Failed to parse Project.toml" file=proj_file exception=e
             end
         end
 
@@ -326,7 +420,7 @@ function check_manifest_compat(env_names::Vector{String})
         if isfile(mani_file)
             try
                 m_data = TOML.parsefile(mani_file)
-                deps = get(m_data, "deps", Dict{String, Any}())
+                deps = get(m_data, "deps", Dict{String,Any}())
 
                 for (pkg, val) in deps
                     entries = isa(val, Vector) ? val : [val]
@@ -335,13 +429,16 @@ function check_manifest_compat(env_names::Vector{String})
 
                         if haskey(merged_manifest_deps, pkg)
                             existing_val = merged_manifest_deps[pkg]
-                            existing_entries = isa(existing_val, Vector) ? existing_val : [existing_val]
+                            existing_entries =
+                                isa(existing_val, Vector) ? existing_val : [existing_val]
                             for existing in existing_entries
                                 existing_uuid = get(existing, "uuid", "")
 
                                 # UUID conflict
-                                if !isempty(uuid) && !isempty(existing_uuid) && uuid != existing_uuid
-                                    return false, Dict{String, Any}(), Dict{String, Any}()
+                                if !isempty(uuid) &&
+                                    !isempty(existing_uuid) &&
+                                    uuid != existing_uuid
+                                    return false, Dict{String,Any}(), Dict{String,Any}()
                                 end
 
                                 # Version & hash check (skip for stdlibs without versions)
@@ -351,8 +448,8 @@ function check_manifest_compat(env_names::Vector{String})
                                 s2 = get(existing, "git-tree-sha1", "")
 
                                 if (!isempty(v1) && !isempty(v2) && v1 != v2) ||
-                                   (!isempty(s1) && !isempty(s2) && s1 != s2)
-                                    return false, Dict{String, Any}(), Dict{String, Any}()
+                                    (!isempty(s1) && !isempty(s2) && s1 != s2)
+                                    return false, Dict{String,Any}(), Dict{String,Any}()
                                 end
                             end
                         else
@@ -360,8 +457,9 @@ function check_manifest_compat(env_names::Vector{String})
                         end
                     end
                 end
-            catch
-                return false, Dict{String, Any}(), Dict{String, Any}()
+            catch e
+                @debug "QuickEnv: Failed to parse Manifest.toml" file=mani_file exception=e
+                return false, Dict{String,Any}(), Dict{String,Any}()
             end
         end
     end
@@ -380,9 +478,7 @@ Fast-stitch compatible source environments into target_env in <5ms without Pkg S
 solving or precompilation overhead.
 """
 function stitch_environments(
-    target_env::String,
-    source_envs::Vector{String},
-    is_silent::Bool
+    target_env::String, source_envs::Vector{String}, is_silent::Bool
 )
     compat, merged_deps, merged_manifest_deps = check_manifest_compat(source_envs)
     !compat && return false
@@ -393,17 +489,19 @@ function stitch_environments(
     # Write Project.toml atomically
     proj_content = Dict(
         "name" => target_env,
-        "description" => "Autonomous compound environment combining @" * join(source_envs, ", @"),
-        "deps" => merged_deps
+        "description" =>
+            "Autonomous compound environment combining @" * join(source_envs, ", @"),
+        "deps" => merged_deps,
     )
     p_file = joinpath(target_dir, "Project.toml")
     p_tmp = p_file * ".tmp." * string(getpid())
     try
         open(p_tmp, "w") do io
-            TOML.print(io, proj_content)
+            return TOML.print(io, proj_content)
         end
         mv(p_tmp, p_file; force=true)
-    catch
+    catch e
+        @debug "QuickEnv: Failed to write Project.toml" file=p_file exception=e
         isfile(p_tmp) && rm(p_tmp; force=true)
     end
 
@@ -411,22 +509,24 @@ function stitch_environments(
     manifest_content = Dict(
         "julia_version" => string(VERSION),
         "manifest_format" => "2.0",
-        "deps" => merged_manifest_deps
+        "deps" => merged_manifest_deps,
     )
     m_file = joinpath(target_dir, "Manifest.toml")
     m_tmp = m_file * ".tmp." * string(getpid())
     try
         open(m_tmp, "w") do io
-            TOML.print(io, manifest_content)
+            return TOML.print(io, manifest_content)
         end
         mv(m_tmp, m_file; force=true)
-    catch
+    catch e
+        @debug "QuickEnv: Failed to write Manifest.toml" file=m_file exception=e
         isfile(m_tmp) && rm(m_tmp; force=true)
     end
 
     if !is_silent
         println(stderr)
-        @info "QuickEnv: Fast-stitched autonomous environment @$target_env\nfrom " * join(source_envs, " + ")
+        @info "QuickEnv: Fast-stitched autonomous environment @$target_env\nfrom " *
+            join(source_envs, " + ")
         println(stderr)
     end
 
@@ -440,8 +540,12 @@ end
 function levenshtein_distance(s1::AbstractString, s2::AbstractString)
     m, n = length(s1), length(s2)
     d = zeros(Int, m + 1, n + 1)
-    for i in 0:m; d[i + 1, 1] = i; end
-    for j in 0:n; d[1, j + 1] = j; end
+    for i in 0:m
+        d[i + 1, 1] = i
+    end
+    for j in 0:n
+        d[1, j + 1] = j
+    end
     for i in 1:m, j in 1:n
         cost = s1[i] == s2[j] ? 0 : 1
         d[i + 1, j + 1] = min(d[i, j + 1] + 1, d[i + 1, j] + 1, d[i, j] + cost)
@@ -467,11 +571,12 @@ function get_known_local_packages()
             if isfile(toml_path)
                 try
                     project_data = TOML.parsefile(toml_path)
-                    deps = get(project_data, "deps", Dict{String, Any}())
+                    deps = get(project_data, "deps", Dict{String,Any}())
                     for (k, _) in deps
                         push!(known, String(k))
                     end
-                catch
+                catch e
+                    @debug "QuickEnv: Error parsing Project.toml" file=toml_path exception=e
                 end
             end
         end
@@ -481,11 +586,12 @@ function get_known_local_packages()
     if active_proj !== nothing && isfile(active_proj)
         try
             project_data = TOML.parsefile(active_proj)
-            deps = get(project_data, "deps", Dict{String, Any}())
+            deps = get(project_data, "deps", Dict{String,Any}())
             for (k, _) in deps
                 push!(known, String(k))
             end
-        catch
+        catch e
+            @debug "QuickEnv: Error parsing active project Project.toml" file=active_proj exception=e
         end
     end
 
@@ -530,16 +636,38 @@ function diagnose_and_suggest_packages(imported_packages::Vector{String}, is_sil
         if suggestion === nothing
             if !registry_loaded
                 try
-                    reg_file = joinpath(DEPOT_PATH[1], "registries", "General", "Registry.toml")
+                    reg_file = joinpath(
+                        DEPOT_PATH[1], "registries", "General", "Registry.toml"
+                    )
                     if isfile(reg_file)
                         reg_data = TOML.parsefile(reg_file)
-                        pkgs_dict = get(reg_data, "packages", Dict{String, Any}())
+                        pkgs_dict = get(reg_data, "packages", Dict{String,Any}())
                         for (uuid, pinfo) in pkgs_dict
                             pname = get(pinfo, "name", "")
                             !isempty(pname) && push!(registry_pkgs, pname)
                         end
                     end
-                catch
+                catch e
+                    @debug "QuickEnv: Error parsing Registry.toml" file=reg_file exception=e
+                end
+
+                # If registry_pkgs is empty (e.g. compressed General registry tarball), try Pkg reachable registries
+                if isempty(registry_pkgs)
+                    try
+                        pkg_mod = Base.require(Main, :Pkg)
+                        regs = Base.invokelatest(
+                            getproperty(
+                                getproperty(pkg_mod, :Registry), :reachable_registries
+                            ),
+                        )
+                        for reg in regs
+                            for (uuid, pkg_info) in reg.pkgs
+                                push!(registry_pkgs, pkg_info.name)
+                            end
+                        end
+                    catch e
+                        @debug "QuickEnv: Error reading reachable registries via Pkg" exception=e
+                    end
                 end
                 registry_loaded = true
             end
@@ -608,7 +736,7 @@ function activate_matched_env(matching::Vector{String}, is_verbose::Bool)
     env_name = matching[selected]
 
     current_project = Base.active_project()
-    if current_project === nothing || !occursin(env_name, current_project)
+    if current_project === nothing || basename(dirname(current_project)) != env_name
         if is_verbose
             println(stderr)
             @info "QuickEnv: Found matching environment @$env_name.\nActivating..."
@@ -618,9 +746,7 @@ function activate_matched_env(matching::Vector{String}, is_verbose::Bool)
     end
 end
 
-function activate_fallback_env(
-    fallback_env::String, script_path::String, is_verbose::Bool
-)
+function activate_fallback_env(fallback_env::String, script_path::String, is_verbose::Bool)
     if !isempty(fallback_env)
         if is_verbose
             println(stderr)
@@ -643,7 +769,9 @@ end
 
 function lazy_pkg_add(packages::Vector{String}, is_silent::Bool)
     pkg_mod = Base.require(Main, :Pkg)
-    Base.invokelatest(getproperty(pkg_mod, :add), packages; io=is_silent ? devnull : stderr)
+    return Base.invokelatest(
+        getproperty(pkg_mod, :add), packages; io=is_silent ? devnull : stderr
+    )
 end
 
 function bootstrap_packages(
@@ -661,11 +789,11 @@ function bootstrap_packages(
         return nothing
     end
 
-    deps = Dict{String, Any}()
+    deps = Dict{String,Any}()
     if isfile(project_file)
         try
             project_data = TOML.parsefile(project_file)
-            deps = get(project_data, "deps", Dict{String, Any}())
+            deps = get(project_data, "deps", Dict{String,Any}())
         catch e
             @error "QuickEnv: Error parsing Project TOML file at $project_file: $e"
         end
@@ -723,7 +851,7 @@ function handle_matching_or_fallback(
             @info "QuickEnv: Activating local directory environment at $script_dir..."
             println(stderr)
         end
-        Pkg.activate(script_dir; io=devnull)
+        activate_local_dir_env(script_dir)
         bootstrap_packages(required_packages, "local directory environment", is_silent)
         return nothing
     end
@@ -759,7 +887,7 @@ function handle_matching_or_fallback(
     # -------------------------------------------------------------------------
     if isempty(fallback_env) && length(required_packages) >= 2
         # Gather all candidate named environments and their packages
-        candidate_envs = Tuple{String, Vector{String}}[]
+        candidate_envs = Tuple{String,Vector{String}}[]
         env_dir = joinpath(DEPOT_PATH[1], "environments")
         if isdir(env_dir)
             for entry in readdir(env_dir)
@@ -769,9 +897,10 @@ function handle_matching_or_fallback(
                 if isfile(toml_path)
                     try
                         p_data = TOML.parsefile(toml_path)
-                        deps = get(p_data, "deps", Dict{String, Any}())
+                        deps = get(p_data, "deps", Dict{String,Any}())
                         push!(candidate_envs, (entry, collect(keys(deps))))
-                    catch
+                    catch e
+                        @debug "QuickEnv: Error reading candidate environment Project.toml" file=toml_path exception=e
                     end
                 end
             end
@@ -789,6 +918,23 @@ function handle_matching_or_fallback(
                     activate_matched_env([auto_env_name], is_verbose)
                     return nothing
                 end
+            end
+        end
+
+        # ---------------------------------------------------------------------
+        # 3b. Optimization A: Partial Fast Stitch + Incremental Pkg.add
+        # ---------------------------------------------------------------------
+        partial_envs, covered_pkgs = find_partial_covering_envs(
+            required_packages, candidate_envs; strict_subset=true
+        )
+        if !isempty(partial_envs) && !isempty(covered_pkgs) && length(covered_pkgs) < length(required_packages)
+            key = get_canonical_key(required_packages)
+            auto_env_name = "auto_" * get_cache_hash(key)
+            if stitch_environments(auto_env_name, partial_envs, is_silent)
+                target_env_display = activate_fallback_env(auto_env_name, script_path, is_verbose)
+                bootstrap_packages(required_packages, target_env_display, is_silent)
+                update_cache_entry(required_packages, auto_env_name, [auto_env_name])
+                return nothing
             end
         end
     end
@@ -810,10 +956,7 @@ function handle_matching_or_fallback(
 end
 
 function handle_forced_creation(
-    create_env::String,
-    required_packages::Vector{String},
-    is_verbose::Bool,
-    is_silent::Bool,
+    create_env::String, required_packages::Vector{String}, is_verbose::Bool, is_silent::Bool
 )
     isempty(create_env) && return false
 
@@ -825,7 +968,7 @@ function handle_forced_creation(
     if isfile(toml_path)
         try
             project_data = TOML.parsefile(toml_path)
-            deps = get(project_data, "deps", Dict{String, Any}())
+            deps = get(project_data, "deps", Dict{String,Any}())
             filter!(pkg -> !haskey(deps, pkg), missing_pkgs)
             if isempty(missing_pkgs)
                 has_all_packages = true
@@ -837,7 +980,7 @@ function handle_forced_creation(
 
     if has_all_packages
         current_project = Base.active_project()
-        if current_project === nothing || !occursin(create_env, current_project)
+        if current_project === nothing || basename(dirname(current_project)) != create_env
             if is_verbose
                 println(stderr)
                 @info "QuickEnv: Found existing environment @$create_env\nwith all dependencies. Activating..."
@@ -853,7 +996,9 @@ function handle_forced_creation(
         if !isdir(env_dir)
             println(stderr, "Action: Creating new shared named environment @$create_env.")
         else
-            println(stderr, "Action: Updating existing shared named environment @$create_env.")
+            println(
+                stderr, "Action: Updating existing shared named environment @$create_env."
+            )
         end
         println(stderr, "Reason: Missing required packages: $missing_pkgs")
         println(stderr, "Triggering automatic package installation...")
@@ -877,22 +1022,23 @@ function update_description(file_path::String, new_desc::String)
     mkpath(dirname(file_path))
     lines = isfile(file_path) ? readlines(file_path; keep=true) : String[]
     description_replaced = false
+    escaped_desc = replace(new_desc, "\\" => "\\\\", "\"" => "\\\"")
 
     updated_lines = String[]
     for line in lines
         if occursin(r"^\s*description\s*=\s*\".*\"\s*$", line)
             description_replaced = true
-            push!(updated_lines, "description = \"$new_desc\"\n")
+            push!(updated_lines, "description = \"$escaped_desc\"\n")
         else
             push!(updated_lines, line)
         end
     end
 
     if !description_replaced
-        pushfirst!(updated_lines, "description = \"$new_desc\"\n\n")
+        pushfirst!(updated_lines, "description = \"$escaped_desc\"\n\n")
     end
 
-    write(file_path, join(updated_lines))
+    return write(file_path, join(updated_lines))
 end
 
 function update_active_env_description(description::String)
@@ -952,26 +1098,45 @@ function parse_inline_options(line::String)
     is_local = false
 
     parts = split(line, '#')
-    length(parts) <= 1 && return fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
+    length(parts) <= 1 && return fallback_env,
+    excluded_envs, is_verbose, is_silent, create_env, description,
+    is_local
 
     comment_part = strip(parts[2])
     clean_line = strip(parts[1])
-    !occursin(r"\bQuickEnv\b", clean_line) && return fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
+    !occursin(r"\bQuickEnv\b", clean_line) && return fallback_env,
+    excluded_envs, is_verbose, is_silent, create_env, description,
+    is_local
 
-    if occursin(r"(?i)\bverbose\b", comment_part); is_verbose = true; end
-    if occursin(r"(?i)\bsilent\b", comment_part); is_silent = true; end
-    if occursin(r"(?i)\blocal\b", comment_part); is_local = true; end
+    if occursin(r"(?i)\bverbose\b", comment_part)
+        is_verbose = true
+    end
+    if occursin(r"(?i)\bsilent\b", comment_part)
+        is_silent = true
+    end
+    if occursin(r"(?i)\blocal\b", comment_part)
+        is_local = true
+    end
 
     m_inline_fallback = match(r"(?i)\bfallback\s*:\s*([a-zA-Z0-9_\-]+)", comment_part)
-    if m_inline_fallback !== nothing; fallback_env = String(m_inline_fallback.captures[1]); end
+    if m_inline_fallback !== nothing
+        fallback_env = String(m_inline_fallback.captures[1])
+    end
 
     m_inline_create = match(r"(?i)\bcreate\s*:\s*([a-zA-Z0-9_\-]+)", comment_part)
-    if m_inline_create !== nothing; create_env = String(m_inline_create.captures[1]); end
+    if m_inline_create !== nothing
+        create_env = String(m_inline_create.captures[1])
+    end
 
-    m_inline_desc = match(r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", comment_part)
+    m_inline_desc = match(
+        r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", comment_part
+    )
     if m_inline_desc !== nothing
         for cap in m_inline_desc.captures
-            if cap !== nothing; description = String(strip(cap)); break; end
+            if cap !== nothing
+                description = String(strip(cap))
+                break
+            end
         end
     end
 
@@ -980,7 +1145,10 @@ function parse_inline_options(line::String)
         raw_excl = m_inline_exclude.captures[1]
         raw_excl = replace(raw_excl, r"(?i)\bfallback\s*:\s*[a-zA-Z0-9_\-]+" => "")
         raw_excl = replace(raw_excl, r"(?i)\bcreate\s*:\s*[a-zA-Z0-9_\-]+" => "")
-        raw_excl = replace(raw_excl, r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))" => "")
+        raw_excl = replace(
+            raw_excl,
+            r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))" => "",
+        )
         raw_excl = replace(raw_excl, r"(?i)\bverbose\b" => "")
         raw_excl = replace(raw_excl, r"(?i)\bsilent\b" => "")
         raw_excl = replace(raw_excl, r"(?i)\blocal\b" => "")
@@ -990,7 +1158,9 @@ function parse_inline_options(line::String)
         end
     end
 
-    return fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
+    return fallback_env,
+    excluded_envs, is_verbose, is_silent, create_env, description,
+    is_local
 end
 
 function parse_standalone_comments(line::String)
@@ -1006,11 +1176,18 @@ function parse_standalone_comments(line::String)
     if m_fallback !== nothing
         content = m_fallback.captures[1]
         m_name = match(r"^\s*([a-zA-Z0-9_\-]+)", content)
-        if m_name !== nothing; fallback_env = String(m_name.captures[1]); end
-        m_inline_desc = match(r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", content)
+        if m_name !== nothing
+            fallback_env = String(m_name.captures[1])
+        end
+        m_inline_desc = match(
+            r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", content
+        )
         if m_inline_desc !== nothing
             for cap in m_inline_desc.captures
-                if cap !== nothing; description = String(strip(cap)); break; end
+                if cap !== nothing
+                    description = String(strip(cap))
+                    break
+                end
             end
         end
     end
@@ -1026,36 +1203,61 @@ function parse_standalone_comments(line::String)
     if m_create !== nothing
         content = m_create.captures[1]
         m_name = match(r"^\s*([a-zA-Z0-9_\-]+)", content)
-        if m_name !== nothing; create_env = String(m_name.captures[1]); end
-        m_inline_desc = match(r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", content)
+        if m_name !== nothing
+            create_env = String(m_name.captures[1])
+        end
+        m_inline_desc = match(
+            r"(?i)\bdesc(?:ription)?\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|([^,]*))", content
+        )
         if m_inline_desc !== nothing
             for cap in m_inline_desc.captures
-                if cap !== nothing; description = String(strip(cap)); break; end
+                if cap !== nothing
+                    description = String(strip(cap))
+                    break
+                end
             end
         end
     end
 
-    m_desc = match(r"^\s*#\s*(?:QuickEnv\.desc(?:ription)?|quickenv_desc(?:ription)?)\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|(.*))$", line)
+    m_desc = match(
+        r"^\s*#\s*(?:QuickEnv\.desc(?:ription)?|quickenv_desc(?:ription)?)\s*:\s*(?:\"([^\"]*)\"|'([^']*)'|(.*))$",
+        line,
+    )
     if m_desc !== nothing
         for cap in m_desc.captures
-            if cap !== nothing; description = String(strip(cap)); break; end
+            if cap !== nothing
+                description = String(strip(cap))
+                break
+            end
         end
     end
 
-    m_verbose = match(r"^\s*#\s*(?:quickenv_verbose|QuickEnv\.verbose)\s*:\s*([a-zA-Z0-9_\-]+)", line)
-    if m_verbose !== nothing; is_verbose = lowercase(strip(m_verbose.captures[1])) == "true"; end
+    m_verbose = match(
+        r"^\s*#\s*(?:quickenv_verbose|QuickEnv\.verbose)\s*:\s*([a-zA-Z0-9_\-]+)", line
+    )
+    if m_verbose !== nothing
+        is_verbose = lowercase(strip(m_verbose.captures[1])) == "true"
+    end
 
-    m_silent = match(r"^\s*#\s*(?:quickenv_silent|QuickEnv\.silent)\s*:\s*([a-zA-Z0-9_\-]+)", line)
-    if m_silent !== nothing; is_silent = lowercase(strip(m_silent.captures[1])) == "true"; end
+    m_silent = match(
+        r"^\s*#\s*(?:quickenv_silent|QuickEnv\.silent)\s*:\s*([a-zA-Z0-9_\-]+)", line
+    )
+    if m_silent !== nothing
+        is_silent = lowercase(strip(m_silent.captures[1])) == "true"
+    end
 
-    m_local = match(r"^\s*#\s*(?:quickenv_local|QuickEnv\.local)\s*:\s*([a-zA-Z0-9_\-]+)", line)
+    m_local = match(
+        r"^\s*#\s*(?:quickenv_local|QuickEnv\.local)\s*:\s*([a-zA-Z0-9_\-]+)", line
+    )
     if m_local !== nothing
         is_local = lowercase(strip(m_local.captures[1])) == "true"
     elseif occursin(r"^\s*#\s*local\s*$", line)
         is_local = true
     end
 
-    return fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
+    return fallback_env,
+    excluded_envs, is_verbose, is_silent, create_env, description,
+    is_local
 end
 
 function extract_included_file(line::String, current_dir::String)
@@ -1078,13 +1280,17 @@ function parse_script_metadata(script_path::String; visited=Set{String}())
     is_local = false
     included_files = String[]
 
-    !isfile(script_path) && return packages, fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
+    !isfile(script_path) && return packages,
+    fallback_env, excluded_envs, is_verbose, is_silent, create_env, description,
+    is_local
 
     push!(visited, script_path)
     current_dir = dirname(script_path)
 
     for line in eachline(script_path)
-        inline_fallback, inline_excl, inline_verbose, inline_silent, inline_create, inline_desc, inline_local = parse_inline_options(line)
+        inline_fallback, inline_excl, inline_verbose, inline_silent, inline_create, inline_desc, inline_local = parse_inline_options(
+            line
+        )
         !isempty(inline_fallback) && (fallback_env = inline_fallback)
         !isempty(inline_excl) && append!(excluded_envs, inline_excl)
         inline_verbose && (is_verbose = true)
@@ -1093,7 +1299,9 @@ function parse_script_metadata(script_path::String; visited=Set{String}())
         !isempty(inline_create) && (create_env = inline_create)
         !isempty(inline_desc) && (description = inline_desc)
 
-        sa_fallback, sa_excl, sa_verbose, sa_silent, sa_create, sa_desc, sa_local = parse_standalone_comments(line)
+        sa_fallback, sa_excl, sa_verbose, sa_silent, sa_create, sa_desc, sa_local = parse_standalone_comments(
+            line
+        )
         !isempty(sa_fallback) && (fallback_env = sa_fallback)
         !isempty(sa_excl) && append!(excluded_envs, sa_excl)
         sa_verbose !== nothing && (is_verbose = sa_verbose)
@@ -1120,9 +1328,9 @@ function parse_script_metadata(script_path::String; visited=Set{String}())
             if !is_silent
                 println(stderr)
                 @warn "QuickEnv: Detected package import(s) $new_pkgs inside included file:\n" *
-                      "  $inc_file\n" *
-                      "Best practice in Julia is to declare all `using` dependencies at the top of the main entry script.\n" *
-                      "(Declare 'silent' to suppress this warning)."
+                    "  $inc_file\n" *
+                    "Best practice in Julia is to declare all `using` dependencies at the top of the main entry script.\n" *
+                    "(Declare 'silent' to suppress this warning)."
                 println(stderr)
             end
             for p in new_pkgs
@@ -1131,7 +1339,9 @@ function parse_script_metadata(script_path::String; visited=Set{String}())
         end
     end
 
-    return packages, fallback_env, excluded_envs, is_verbose, is_silent, create_env, description, is_local
+    return packages,
+    fallback_env, excluded_envs, is_verbose, is_silent, create_env, description,
+    is_local
 end
 
 function find_matching_envs(required_pkgs::Vector{String})
@@ -1147,11 +1357,12 @@ function find_matching_envs(required_pkgs::Vector{String})
 
         try
             project_data = TOML.parsefile(toml_path)
-            deps = get(project_data, "deps", Dict{String, Any}())
+            deps = get(project_data, "deps", Dict{String,Any}())
             if all(pkg -> haskey(deps, pkg), required_pkgs)
                 push!(matching_envs, entry)
             end
-        catch
+        catch e
+            @debug "QuickEnv: Error reading environment Project.toml" file=toml_path exception=e
         end
     end
     return sort(matching_envs)
@@ -1181,11 +1392,13 @@ function __init__()
     # Register automatic failure-invalidation exit hook:
     # If the script fails during runtime (e.g. unhandled exception),
     # invalidate its cached entry immediately.
-    atexit(function()
-        if isdefined(Base, :current_exceptions) && !isempty(Base.current_exceptions())
-            invalidate_script_cache(script_path)
+    atexit(
+        function ()
+            if isdefined(Base, :current_exceptions) && !isempty(Base.current_exceptions())
+                invalidate_script_cache(script_path)
+            end
         end
-    end)
+    )
 
     env_verbose = get(ENV, "QUICKENV_VERBOSE", "false")
     env_silent = get(ENV, "QUICKENV_SILENT", "false")
@@ -1220,13 +1433,20 @@ function __init__()
     end
 
     handle_matching_or_fallback(
-        required_packages, fallback_env, excluded_envs, is_verbose, is_silent, is_local, script_path
+        required_packages,
+        fallback_env,
+        excluded_envs,
+        is_verbose,
+        is_silent,
+        is_local,
+        script_path,
     )
 
     project_file = Base.active_project()
     if project_file !== nothing
         active_dir = dirname(project_file)
-        if active_dir != dirname(script_path) && !occursin(r"^v\d+\.\d+$", basename(active_dir))
+        if active_dir != dirname(script_path) &&
+            !occursin(r"^v\d+\.\d+$", basename(active_dir))
             warn_ignored_local_files(script_path, basename(active_dir), is_silent)
             if isempty(fallback_env) && !is_local
                 update_script_cache_entry(script_path, basename(active_dir))

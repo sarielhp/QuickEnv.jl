@@ -13,15 +13,15 @@ using Printf
 using TOML
 
 # Core terminal colors using standard Crayons package
-bold(s) = string(Crayon(bold=true), s, Crayon(reset=true))
-red(s) = string(Crayon(foreground=:red), s, Crayon(reset=true))
-green(s) = string(Crayon(foreground=:green), s, Crayon(reset=true))
-yellow(s) = string(Crayon(foreground=:yellow), s, Crayon(reset=true))
-blue(s) = string(Crayon(foreground=:blue), s, Crayon(reset=true))
-cyan(s) = string(Crayon(foreground=:cyan), s, Crayon(reset=true))
-gray(s) = string(Crayon(foreground=:dark_gray), s, Crayon(reset=true))
+bold(s) = string(Crayon(; bold=true), s, Crayon(; reset=true))
+red(s) = string(Crayon(; foreground=:red), s, Crayon(; reset=true))
+green(s) = string(Crayon(; foreground=:green), s, Crayon(; reset=true))
+yellow(s) = string(Crayon(; foreground=:yellow), s, Crayon(; reset=true))
+blue(s) = string(Crayon(; foreground=:blue), s, Crayon(; reset=true))
+cyan(s) = string(Crayon(; foreground=:cyan), s, Crayon(; reset=true))
+gray(s) = string(Crayon(; foreground=:dark_gray), s, Crayon(; reset=true))
 
-const ENV_DIR = joinpath(homedir(), ".julia", "environments")
+const ENV_DIR = joinpath(DEPOT_PATH[1], "environments")
 
 # Custom parser for Julia Project.toml files using standard TOML library
 function parse_project_toml(file_path::String)
@@ -38,31 +38,13 @@ function parse_project_toml(file_path::String)
             data["deps"][k] = string(v)
         end
     catch e
+        @debug "jlenv: Error parsing Project TOML" file=file_path exception=e
     end
     return data
 end
 
-# Extract packages from a single code line (helper from QuickEnv logic)
-function extract_packages_from_line(line::String)
-    packages = String[]
-    clean_line = strip(first(split(line, '#')))
-    m = match(r"^\s*(using|import)\s+(.*)$", clean_line)
-    if m === nothing
-        return packages
-    end
-
-    raw_imports = m.captures[2]
-    pkg_part = first(split(raw_imports, ':'))
-    parts = split(pkg_part, ',')
-    for part in parts
-        pkg = strip(part)
-        if !isempty(pkg) && !startswith(pkg, '.')
-            pkg_name = first(split(pkg))
-            push!(packages, String(pkg_name))
-        end
-    end
-    return packages
-end
+# Extract packages from a single code line (delegated to QuickEnv logic)
+extract_packages_from_line(line::String) = QuickEnv.extract_packages_from_line(line)
 
 # Extract Julia packages used in a script
 function extract_packages(script_path::String)
@@ -82,27 +64,9 @@ function extract_packages(script_path::String)
     return packages
 end
 
-# Update or insert the description key in a Project.toml file
+# Update or insert the description key in a Project.toml file (delegated to QuickEnv logic)
 function update_description(file_path::String, new_desc::String)
-    mkpath(dirname(file_path))
-    lines = isfile(file_path) ? readlines(file_path; keep=true) : String[]
-    description_replaced = false
-
-    updated_lines = String[]
-    for line in lines
-        if occursin(r"^\s*description\s*=\s*\".*\"\s*$", line)
-            description_replaced = true
-            push!(updated_lines, "description = \"$new_desc\"\n")
-        else
-            push!(updated_lines, line)
-        end
-    end
-
-    if !description_replaced
-        pushfirst!(updated_lines, "description = \"$new_desc\"\n\n")
-    end
-
-    write(file_path, join(updated_lines))
+    return QuickEnv.update_description(file_path, new_desc)
 end
 
 # Strip leading '@' symbol from environment name if present
@@ -112,16 +76,14 @@ clean_env_name(name::String) = startswith(name, "@") ? name[2:end] : name
 function list_environments()
     if !isdir(ENV_DIR)
         println(yellow("No named environments found in $ENV_DIR"))
-        return
+        return nothing
     end
 
-    envs = filter(
-        d -> isdir(joinpath(ENV_DIR, d)) && !startswith(d, "."), readdir(ENV_DIR)
-    )
+    envs = filter(d -> isdir(joinpath(ENV_DIR, d)) && !startswith(d, "."), readdir(ENV_DIR))
 
     if isempty(envs)
         println(yellow("No named environments found in $ENV_DIR"))
-        return
+        return nothing
     end
 
     println(bold(cyan("\nJulia Named Environments (~/.julia/environments):")))
@@ -144,7 +106,7 @@ function list_environments()
 
         Printf.format(stdout, format_str, "@" * env, desc_str)
     end
-    println()
+    return println()
 end
 
 # 2. Show detailed package contents of a single environment
@@ -155,7 +117,7 @@ function show_environment(env_raw::String)
 
     if !isdir(env_path) || !isfile(proj_file)
         println(stderr, red("Error: Named environment '@$env_name' does not exist."))
-        return
+        return nothing
     end
 
     data = parse_project_toml(proj_file)
@@ -179,7 +141,7 @@ function show_environment(env_raw::String)
             println("  • $(bold(green(pkg))) " * gray("($uuid)"))
         end
     end
-    println()
+    return println()
 end
 
 # 3. Add packages to an environment
@@ -187,17 +149,15 @@ function add_packages(env_raw::String, pkgs::Vector{String})
     env_name = clean_env_name(env_raw)
     if isempty(pkgs)
         println(stderr, red("Error: No packages specified to add."))
-        return
+        return nothing
     end
 
     println(
-        bold(
-            cyan("Adding $(length(pkgs)) package(s) to environment '@$env_name'...\n")
-        ),
+        bold(cyan("Adding $(length(pkgs)) package(s) to environment '@$env_name'...\n"))
     )
     Pkg.activate(env_name; shared=true)
     Pkg.add(pkgs)
-    println(green("\nSuccessfully added packages to '@$env_name'."))
+    return println(green("\nSuccessfully added packages to '@$env_name'."))
 end
 
 # 4. Describe an environment
@@ -212,10 +172,8 @@ function describe_environment(env_raw::String, desc::String)
     end
 
     update_description(proj_file, desc)
-    println(
-        green(
-            "Successfully updated description for '@$env_name':\n  " * bold(desc)
-        ),
+    return println(
+        green("Successfully updated description for '@$env_name':\n  " * bold(desc))
     )
 end
 
@@ -226,7 +184,7 @@ function create_from_script(env_raw::String, script_path::String)
 
     if isempty(pkgs)
         println(yellow("No packages found in $script_path to install."))
-        return
+        return nothing
     end
 
     println(bold(cyan("Found $(length(pkgs)) package(s) in $script_path:")))
@@ -241,7 +199,7 @@ function create_from_script(env_raw::String, script_path::String)
     desc = "Environment created for script $(basename(script_path))"
     update_description(proj_file, desc)
 
-    println(green("\nSuccessfully created '@$env_name' for $script_path!"))
+    return println(green("\nSuccessfully created '@$env_name' for $script_path!"))
 end
 
 # 6. Find environments matching a script
@@ -249,7 +207,7 @@ function find_matching_environments(script_path::String)
     pkgs = extract_packages(script_path)
     if isempty(pkgs)
         println(yellow("No packages found in $script_path."))
-        return
+        return nothing
     end
 
     println(bold(cyan("Required packages for $script_path:")))
@@ -258,12 +216,10 @@ function find_matching_environments(script_path::String)
 
     if !isdir(ENV_DIR)
         println(yellow("No environments found in $ENV_DIR."))
-        return
+        return nothing
     end
 
-    envs = filter(
-        d -> isdir(joinpath(ENV_DIR, d)) && !startswith(d, "."), readdir(ENV_DIR)
-    )
+    envs = filter(d -> isdir(joinpath(ENV_DIR, d)) && !startswith(d, "."), readdir(ENV_DIR))
     matching = String[]
 
     for env in envs
@@ -277,22 +233,10 @@ function find_matching_environments(script_path::String)
     end
 
     if isempty(matching)
-        println(
-            yellow("No existing environment contains all required packages."),
-        )
-        println(
-            gray(
-                "Tip: You can create one with: jlenv create @<new_env> $script_path",
-            ),
-        )
+        println(yellow("No existing environment contains all required packages."))
+        println(gray("Tip: You can create one with: jlenv create @<new_env> $script_path"))
     else
-        println(
-            bold(
-                green(
-                    "Matching environment(s) ($(length(matching)) found):\n",
-                ),
-            ),
-        )
+        println(bold(green("Matching environment(s) ($(length(matching)) found):\n")))
         for env in sort(matching)
             proj_file = joinpath(ENV_DIR, env, "Project.toml")
             data = parse_project_toml(proj_file)
@@ -314,12 +258,10 @@ function match_and_run(script_path::String, extra_args::Vector{String})
 
     if !isdir(ENV_DIR)
         println(stderr, red("Error: No environments directory found at $ENV_DIR"))
-        return
+        return nothing
     end
 
-    envs = filter(
-        d -> isdir(joinpath(ENV_DIR, d)) && !startswith(d, "."), readdir(ENV_DIR)
-    )
+    envs = filter(d -> isdir(joinpath(ENV_DIR, d)) && !startswith(d, "."), readdir(ENV_DIR))
     matching = String[]
 
     for env in envs
@@ -339,34 +281,32 @@ function match_and_run(script_path::String, extra_args::Vector{String})
                 "Error: No matching environment found for $script_path with packages: $(join(pkgs, ", "))",
             ),
         )
-        return
+        return nothing
     end
 
     selected_env = sort(matching)[1]
     println(bold(cyan("Selected matching environment: ")) * bold("@$selected_env"))
     cmd = `julia --project=@$selected_env $script_path $extra_args`
-    run(cmd)
+    return run(cmd)
 end
 
 # 8. Run a script in a specified environment
-function run_script(
-    env_raw::String, script_path::String, extra_args::Vector{String}
-)
+function run_script(env_raw::String, script_path::String, extra_args::Vector{String})
     env_name = clean_env_name(env_raw)
     env_path = joinpath(ENV_DIR, env_name)
 
     if !isdir(env_path)
         println(stderr, red("Error: Named environment '@$env_name' does not exist."))
-        return
+        return nothing
     end
 
     if !isfile(script_path)
         println(stderr, red("Error: Script file not found: $script_path"))
-        return
+        return nothing
     end
 
     cmd = `julia --project=@$env_name $script_path $extra_args`
-    run(cmd)
+    return run(cmd)
 end
 
 # 9. Launch REPL in environment
@@ -376,12 +316,12 @@ function launch_repl(env_raw::String)
 
     if !isdir(env_path)
         println(stderr, red("Error: Named environment '@$env_name' does not exist."))
-        return
+        return nothing
     end
 
     println(bold(cyan("Launching Julia REPL in '@$env_name'...")))
     cmd = `julia --project=@$env_name`
-    run(cmd)
+    return run(cmd)
 end
 
 # 10. Delete an environment
@@ -391,14 +331,10 @@ function remove_environment(env_raw::String)
 
     if !isdir(env_path)
         println(stderr, red("Error: Named environment '@$env_name' does not exist."))
-        return
+        return nothing
     end
 
-    print(
-        yellow(
-            "Are you sure you want to delete environment '@$env_name'? [y/N]: "
-        ),
-    )
+    print(yellow("Are you sure you want to delete environment '@$env_name'? [y/N]: "))
     choice = strip(readline())
 
     if lowercase(choice) in ("y", "yes")
@@ -415,7 +351,7 @@ function search_packages(query::String)
     registries = Pkg.Registry.reachable_registries()
     if isempty(registries)
         println(yellow("No reachable registries found."))
-        return
+        return nothing
     end
 
     results = Tuple{String,String}[]
@@ -442,12 +378,14 @@ end
 function prune_environments()
     if !isdir(ENV_DIR)
         println(yellow("No environments directory found at $ENV_DIR."))
-        return
+        return nothing
     end
 
     auto_envs = filter(
-        d -> (startswith(d, "auto_") || startswith(d, "test_")) && isdir(joinpath(ENV_DIR, d)),
-        readdir(ENV_DIR)
+        d ->
+            (startswith(d, "auto_") || startswith(d, "test_")) &&
+            isdir(joinpath(ENV_DIR, d)),
+        readdir(ENV_DIR),
     )
 
     println(bold(cyan("\nPruning QuickEnv Auto-Generated Environments:")))
@@ -469,7 +407,7 @@ function prune_environments()
         println(green("  • QuickEnv resolution cache cleared."))
     end
 
-    println(bold(green("\nPrune complete! Environment registry is clean.\n")))
+    return println(bold(green("\nPrune complete! Environment registry is clean.\n")))
 end
 
 # 12. Merge multiple environments
@@ -478,20 +416,43 @@ function merge_environments(target_raw::String, source_raws::Vector{String})
     source_envs = [clean_env_name(s) for s in source_raws]
 
     if isempty(source_envs)
-        println(stderr, red("Error: Please provide at least one source environment to merge."))
-        return
+        println(
+            stderr, red("Error: Please provide at least one source environment to merge.")
+        )
+        return nothing
     end
 
-    println(bold(cyan("\nMerging into @$target_env from: ")) * join(["@" * s for s in source_envs], ", "))
+    println(
+        bold(cyan("\nMerging into @$target_env from: ")) *
+        join(["@" * s for s in source_envs], ", "),
+    )
 
     compat, merged_deps, _ = QuickEnv.check_manifest_compat(source_envs)
     if compat
         QuickEnv.stitch_environments(target_env, source_envs, false)
-        println(green("Merge complete! Environment @$target_env is ready to use with zero recompilation."))
+        println(
+            green(
+                "Merge complete! Environment @$target_env is ready to use with zero recompilation.",
+            ),
+        )
     else
         println(yellow("Warning: Dependency version conflicts detected between sources."))
         println(yellow("Falling back to full Pkg joint resolution..."))
-        pkgs = collect(keys(merged_deps))
+        all_deps = Dict{String,String}()
+        for s in source_envs
+            proj = joinpath(ENV_DIR, s, "Project.toml")
+            if isfile(proj)
+                data = parse_project_toml(proj)
+                merge!(all_deps, data["deps"])
+            end
+        end
+        pkgs = collect(keys(all_deps))
+        if isempty(pkgs)
+            println(
+                stderr, red("Error: No packages found in source environments to merge.")
+            )
+            return nothing
+        end
         Pkg.activate(target_env; shared=true)
         Pkg.add(pkgs)
         println(green("Resolved and created @$target_env successfully!"))
@@ -502,11 +463,17 @@ end
 function check_compatibility(source_raws::Vector{String})
     source_envs = [clean_env_name(s) for s in source_raws]
     if length(source_envs) < 2
-        println(stderr, red("Error: Please provide at least two environments to check compatibility."))
-        return
+        println(
+            stderr,
+            red("Error: Please provide at least two environments to check compatibility."),
+        )
+        return nothing
     end
 
-    println(bold(cyan("\nChecking Manifest Compatibility for: ")) * join(["@" * s for s in source_envs], ", "))
+    println(
+        bold(cyan("\nChecking Manifest Compatibility for: ")) *
+        join(["@" * s for s in source_envs], ", "),
+    )
     compat, merged_deps, merged_m_deps = QuickEnv.check_manifest_compat(source_envs)
 
     if compat
@@ -517,7 +484,7 @@ function check_compatibility(source_raws::Vector{String})
         println(red("Status: INCOMPATIBLE ❌"))
         println(yellow("Conflicting versions or UUIDs found among dependencies."))
     end
-    println()
+    return println()
 end
 
 # 14. Manage QuickEnv resolution cache
@@ -537,7 +504,7 @@ function manage_cache(args::Vector{String})
         if isempty(cache)
             println(gray("  (Cache is empty)"))
         else
-            scripts_table = get(cache, "scripts", Dict{String, Any}())
+            scripts_table = get(cache, "scripts", Dict{String,Any}())
             resolutions = filter(pair -> pair.first != "scripts", cache)
 
             if !isempty(resolutions)
@@ -545,7 +512,10 @@ function manage_cache(args::Vector{String})
                 for (key, val) in sort(collect(resolutions); by=first)
                     env = get(val, "env", "unknown")
                     sources = get(val, "sources", String[])
-                    println("  • $(bold(key)) → $(bold(green("@" * env))) " * gray("(sources: " * join(sources, ", ") * ")"))
+                    println(
+                        "  • $(bold(key)) → $(bold(green("@" * env))) " *
+                        gray("(sources: " * join(sources, ", ") * ")"),
+                    )
                 end
             end
 
@@ -553,7 +523,11 @@ function manage_cache(args::Vector{String})
                 println(bold(yellow("\nScript Fast-Lookups:")))
                 for (spath, sval) in sort(collect(scripts_table); by=first)
                     senv = get(sval, "env", "unknown")
-                    println("  • $(bold(basename(spath))) " * gray("($(dirname(spath)))") * " → $(bold(green("@" * senv)))")
+                    println(
+                        "  • $(bold(basename(spath))) " *
+                        gray("($(dirname(spath)))") *
+                        " → $(bold(green("@" * senv)))",
+                    )
                 end
             end
         end
@@ -565,30 +539,38 @@ end
 function print_command_help(cmd::String)
     cmd_clean = clean_env_name(cmd)
     if cmd_clean == "list"
-        println("""
-        $(bold(cyan("Command:"))) list
-        $(bold(yellow("Description:"))) List all shared named environments found in ~/.julia/environments.
-        $(bold(yellow("Usage:"))) jlenv list
-        """)
+        println(
+            """
+    $(bold(cyan("Command:"))) list
+    $(bold(yellow("Description:"))) List all shared named environments found in ~/.julia/environments.
+    $(bold(yellow("Usage:"))) jlenv list
+    """,
+        )
     elseif cmd_clean == "show"
-        println("""
-        $(bold(cyan("Command:"))) show
-        $(bold(yellow("Description:"))) Display metadata, description, and direct package dependencies of a named environment.
-        $(bold(yellow("Usage:"))) jlenv show <env_name>
-        """)
+        println(
+            """
+    $(bold(cyan("Command:"))) show
+    $(bold(yellow("Description:"))) Display metadata, description, and direct package dependencies of a named environment.
+    $(bold(yellow("Usage:"))) jlenv show <env_name>
+    """,
+        )
     elseif cmd_clean == "merge"
-        println("""
-        $(bold(cyan("Command:"))) merge
-        $(bold(yellow("Description:"))) Merge multiple existing named environments into a target environment.
-        $(bold(yellow("Usage:"))) jlenv merge <target_env> <env1> <env2> ...
-        $(bold(yellow("Example:"))) jlenv merge @plotting_data @plotting @data
-        """)
+        println(
+            """
+    $(bold(cyan("Command:"))) merge
+    $(bold(yellow("Description:"))) Merge multiple existing named environments into a target environment.
+    $(bold(yellow("Usage:"))) jlenv merge <target_env> <env1> <env2> ...
+    $(bold(yellow("Example:"))) jlenv merge @plotting_data @plotting @data
+    """,
+        )
     elseif cmd_clean in ("compat", "check-compat")
-        println("""
-        $(bold(cyan("Command:"))) check-compat
-        $(bold(yellow("Description:"))) Check whether multiple named environments have compatible dependency manifests.
-        $(bold(yellow("Usage:"))) jlenv check-compat <env1> <env2> ...
-        """)
+        println(
+            """
+    $(bold(cyan("Command:"))) check-compat
+    $(bold(yellow("Description:"))) Check whether multiple named environments have compatible dependency manifests.
+    $(bold(yellow("Usage:"))) jlenv check-compat <env1> <env2> ...
+    """,
+        )
     elseif cmd_clean == "cache"
         println("""
         $(bold(cyan("Command:"))) cache
@@ -602,7 +584,8 @@ function print_command_help(cmd::String)
 end
 
 function print_help()
-    println("""
+    return println(
+        """
 $(bold(cyan("jlenv"))) - Manage Julia Named Environments (QuickEnv CLI)
 
 $(bold(yellow("Usage:"))) jlenv <command> [arguments...]
@@ -625,7 +608,8 @@ $(bold(yellow("Commands:")))
   search <query>                      Search General Registry for a package
 
 $(bold(gray("Tip: Run 'jlenv help <command>' or call a command without arguments to view its detailed usage.")))
-""")
+""",
+    )
 end
 
 function (@main)(args)
@@ -642,31 +626,67 @@ function (@main)(args)
     elseif action == "show"
         isempty(action_args) ? print_command_help("show") : show_environment(action_args[1])
     elseif action == "merge"
-        length(action_args) < 2 ? print_command_help("merge") : merge_environments(action_args[1], action_args[2:end])
+        if length(action_args) < 2
+            print_command_help("merge")
+        else
+            merge_environments(action_args[1], action_args[2:end])
+        end
     elseif action in ("compat", "check-compat")
-        length(action_args) < 2 ? print_command_help("check-compat") : check_compatibility(action_args)
+        if length(action_args) < 2
+            print_command_help("check-compat")
+        else
+            check_compatibility(action_args)
+        end
     elseif action == "cache"
         manage_cache(action_args)
     elseif action in ("prune", "clean-auto", "reset")
         prune_environments()
     elseif action == "add"
-        isempty(action_args) ? print_command_help("add") : add_packages(action_args[1], action_args[2:end])
+        if isempty(action_args)
+            print_command_help("add")
+        else
+            add_packages(action_args[1], action_args[2:end])
+        end
     elseif action == "describe"
-        length(action_args) < 2 ? print_command_help("describe") : describe_environment(action_args[1], action_args[2])
+        if length(action_args) < 2
+            print_command_help("describe")
+        else
+            describe_environment(action_args[1], action_args[2])
+        end
     elseif action == "create"
-        length(action_args) < 2 ? print_command_help("create") : create_from_script(action_args[1], action_args[2])
+        if length(action_args) < 2
+            print_command_help("create")
+        else
+            create_from_script(action_args[1], action_args[2])
+        end
     elseif action == "match"
-        isempty(action_args) ? print_command_help("match") : find_matching_environments(action_args[1])
+        if isempty(action_args)
+            print_command_help("match")
+        else
+            find_matching_environments(action_args[1])
+        end
     elseif action == "mrun"
-        isempty(action_args) ? print_command_help("mrun") : match_and_run(action_args[1], action_args[2:end])
+        if isempty(action_args)
+            print_command_help("mrun")
+        else
+            match_and_run(action_args[1], action_args[2:end])
+        end
     elseif action == "run"
-        length(action_args) < 2 ? print_command_help("run") : run_script(action_args[1], action_args[2], action_args[3:end])
+        if length(action_args) < 2
+            print_command_help("run")
+        else
+            run_script(action_args[1], action_args[2], action_args[3:end])
+        end
     elseif action == "repl"
         isempty(action_args) ? print_command_help("repl") : launch_repl(action_args[1])
     elseif action in ("rm", "delete")
         isempty(action_args) ? print_command_help("rm") : remove_environment(action_args[1])
     elseif action == "search"
-        isempty(action_args) ? print_command_help("search") : search_packages(action_args[1])
+        if isempty(action_args)
+            print_command_help("search")
+        else
+            search_packages(action_args[1])
+        end
     elseif action in ("help", "--help", "-h")
         isempty(action_args) ? print_help() : print_command_help(action_args[1])
     else

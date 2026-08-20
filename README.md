@@ -2,13 +2,13 @@
 
 [![Build Status](https://github.com/sarielhp/QuickEnv.jl/workflows/CI/badge.svg)](https://github.com/sarielhp/QuickEnv.jl/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Julia Version](https://img.shields.io/badge/julia-v1.6+-8A2BE2.svg)](https://julialang.org/)
+[![Julia Version](https://img.shields.io/badge/julia-v1.10+-8A2BE2.svg)](https://julialang.org/)
 
-`QuickEnv.jl` automatically handles all the environment setup required to run your Julia scripts.
+`QuickEnv.jl` automatically handles all environment setup required to run your Julia scripts—**without ever polluting your global environment**.
 
-After installing `QuickEnv` once in your global environment, simply add `using QuickEnv` to the top of your file. From that point on, execution is completely seamless: QuickEnv inspects your script's imports, finds or creates a matching environment, installs any missing packages, and activates everything transparently before your code runs.
+After installing `QuickEnv` once in your global environment (`@v1.x`), simply add `using QuickEnv` to the top of any standalone script. QuickEnv automatically inspects your script's imports, discovers or fast-stitches a matching shared environment, installs any missing packages into isolated environments, and activates everything transparently before your code runs.
 
-Just execute your script—QuickEnv takes care of the setup behind the scenes, eliminating the usual environment tedium in Julia.
+> **Zero Friction, Zero Pollution**: Run standalone scripts (`julia script.jl` or `./script.jl`) with automatic environment resolution while keeping your global `@v1.x` environment completely pristine and conflict-free.
 
 ---
 
@@ -37,26 +37,26 @@ using Plots
 That's it! When you run `julia your_script.jl` or `./your_script.jl`:
 - QuickEnv parses the script's imports (`using Plots`).
 - If an existing [named environment](#understanding-shared-named-environments) satisfies the imports (e.g., `@plotting`), QuickEnv activates it immediately.
+- If multiple environments cover the imports (e.g., `@plotting` + `@data`), QuickEnv fast-stitches them into a combined `@auto_<hash>` environment in `<5ms` without recompilation.
 - If no existing environment matches, QuickEnv creates a dedicated named environment (`@auto_<hash>`), installs any missing packages via `Pkg.add`, and activates it.
-- Everything runs transparently, and subsequent runs reuse cached resolution for near-zero startup overhead.
+- **Your global environment (`@v1.x`) is never modified.** Subsequent runs reuse cached resolution for near-zero startup overhead.
 
 ---
 
-## Problem and approach
+## The Problem: The Global Environment Trap
 
 Julia package environments typically follow one of three approaches:
 
-1. **Global Environment (`@v1.x`)**: Straightforward to use initially, but can lead to version conflicts across unrelated scripts over time.
-2. **Local Directory Projects (`--project=.`)**: Provides project isolation, but creates local `Project.toml` and `Manifest.toml` files for one-off scripts and duplicates package downloads and precompilations.
-3. **Shared Named Environments (`@plotting`, `@data`)**: Stores reusable environments under `~/.julia/environments/`, but requires manually passing `--project=@env` flags on every run.
+1. **Global Environment (`@v1.x`)**: Convenient for quick scripts, but installing multiple packages eventually leads to **dependency hell** (incompatible version bounds across unrelated scripts) and slow startup due to invalidations.
+2. **Local Directory Projects (`--project=.`)**: Provides project isolation, but litters local directories with `Project.toml` / `Manifest.toml` files for simple one-off scripts and duplicates package precompilations.
+3. **Shared Named Environments (`@plotting`, `@data`)**: Stores reusable environments under `~/.julia/environments/`, but requires manually remembering and typing `--project=@env` flags every time.
 
-**QuickEnv automates named and local environment selection:**
+**QuickEnv gives you the best of all three:**
 
-- **First Choice**: Finds and activates an existing global **named environment** that satisfies the script's imports.
-- **Compound Stitching**: If multiple environments together cover all dependencies (e.g. `@plotting` + `@data`), QuickEnv validates their manifest compatibility and stitches them into a combined `@auto_<hash>` environment without recompilation.
-- **Fallback (Explicit)**: Creates and activates a specified named environment (e.g. `@plotting`) and installs missing packages.
-- **Fallback (Default)**: Creates an autonomous named environment (`@auto_<hash>`) in `~/.julia/environments/` and installs dependencies.
-- **Local Project Mode**: Can be directed via `# local` to activate the script's local folder as a standard project.
+- **Pristine Global Environment**: Strictly protects `@v1.x` from package contamination.
+- **Autonomous Named Selection**: Automatically finds or synthesizes the right named environment in `~/.julia/environments/`.
+- **Fast Compound Stitching**: Combines compatible environments (e.g., `@plotting` + `@data`) in `<5ms` with zero recompilation.
+- **Local Project Mode**: Supports `# local` whenever you do want the local directory activated as `--project=.`.
 
 ---
 
@@ -103,18 +103,6 @@ Out of the box, Julia includes the standard versioned global environment (e.g., 
 - **Diagnostics & Typo Suggestions**: Identifies package casing discrepancies (e.g., `using cairo` -> `using Cairo`) and typos against the General Registry.
 - **Self-Healing Invalidation**: Automatically clears cached script entries on unhandled exceptions via an `atexit` hook so subsequent runs re-evaluate dependencies.
 - **Atomic Operations**: Employs PID-isolated temporary files and atomic POSIX replacement (`mv`) for cache and environment writes.
-
----
-
-## Installation
-
-Install `QuickEnv` in your **global** Julia environment:
-
-```julia
-using Pkg
-Pkg.activate()  # Activate standard global environment (e.g., @v1.12)
-Pkg.add(url="https://github.com/sarielhp/QuickEnv.jl.git")
-```
 
 ---
 
@@ -238,94 +226,56 @@ end
 
 ## Technical architecture
 
-### 1. Script parsing
-QuickEnv scans the script line-by-line prior to package loading:
-- Strips comments.
-- Handles colon syntax (`using Module: symbol1, symbol2`), extracting `Module`.
-- Extracts root packages from submodule imports (`using HTTP.WebSockets` -> `HTTP`).
-- Recursively parses local `include("...")` calls.
+QuickEnv uses an autonomous multi-stage resolution engine:
+1. **O(1) Fast Script-Level Cache**: Checks file modification times (`mtime`) against `~/.julia/quickenv/cache.toml` to reuse known environments instantly.
+2. **Bitmask Set-Cover Solver**: Maps dependencies to hardware bitmasks (`UInt64`) to find the minimal combination of existing named environments.
+3. **Manifest Fast-Stitching (<5ms)**: Verifies transitive dependency compatibility and synthesizes compound `@auto_<hash>` environments on disk without running Pkg's SAT solver or recompiling packages.
+4. **Autonomous Fallback**: Bootstraps dedicated `@auto_<hash>` environments via `Pkg.add` when new dependencies are introduced.
 
-### 2. Environment matching & filtering
-- Scans `DEPOT_PATH[1]/environments/` for directories containing `Project.toml`.
-- Reads dependency maps from project files.
-- Filters out environments matching exclusion patterns.
-- Evaluates candidate subsets using bitmask set-cover.
-
-### 3. Manifest compatibility and stitching
-- Parses `Manifest.toml` files of candidate environments.
-- Checks that shared direct and transitive dependencies share identical UUIDs, versions, and git tree hashes.
-- Writes combined `Project.toml` and `Manifest.toml` files into `~/.julia/environments/@auto_<hash>`.
+> For an in-depth explanation of fast stitching vs. runtime stacking (`LOAD_PATH`), bitmask scoring math, and caching internals, see **[docs/DESIGN.md](docs/DESIGN.md)**.
 
 ---
 
-## The `jlenv.jl` CLI tool
+## Environment management with `jlenv`
 
-A management script is included at `tools/jlenv.jl`.
-
-### Commands
+QuickEnv includes an administrative dashboard utility at `tools/jlenv.jl` to inspect, clean, and manage shared named environments:
 
 ```bash
-# List all environments and descriptions
+# Clean up auto-generated environments and reset cache
+./tools/jlenv.jl prune
+
+# List all named environments and their descriptions
 ./tools/jlenv.jl list
 
-# Check compatibility between environments
-./tools/jlenv.jl check-compat @plotting @data
-
-# Merge multiple environments into a new named environment
-./tools/jlenv.jl merge @plotting_data @plotting @data
-
-# View resolution cache
-./tools/jlenv.jl cache list
-
-# Show registered packages in an environment
+# Show packages in a specific named environment
 ./tools/jlenv.jl show @plotting
 
-# Add packages to an environment
-./tools/jlenv.jl add @plotting DataStructures DataFrames
+# Inspect the resolution cache
+./tools/jlenv.jl cache list
 
-# Set or update environment description
-./tools/jlenv.jl describe @plotting "Plotting environment with Plots.jl and Cairo"
-
-# Create an environment from a Julia script
-./tools/jlenv.jl create @math_env solve_inequality.jl
-
-# Find environments that satisfy a script
-./tools/jlenv.jl match plot_inequality.jl
-
-# Run a Julia script in a matching named environment
-./tools/jlenv.jl mrun plot_inequality.jl
-
-# Run a Julia script in a specified named environment
-./tools/jlenv.jl run @plotting plot_inequality.jl
-
-# Launch Julia REPL in a named environment
+# Open an interactive Julia REPL inside a named environment
 ./tools/jlenv.jl repl @plotting
-
-# Delete a named environment
-./tools/jlenv.jl rm @test_env
-
-# Search General Registry for a package
-./tools/jlenv.jl search DataStructures
 ```
+
+> For the full CLI command reference and shell setup guide, see **[docs/jlenv.md](docs/jlenv.md)**.
 
 ---
 
-## Design considerations, best practices & limitations
+## Best practices & limitations
 
-### 1. Exploration vs. production
-QuickEnv is intended for interactive exploration, data workflows, standalone tools, and script execution. For production systems or published packages requiring strict reproducibility, a committed `Manifest.toml` tracked in Git remains standard practice.
+### 1. Interactive scripts vs. production packages
+QuickEnv is designed for interactive exploration, data science workflows, standalone scripts, and computational tools. For production applications or published packages requiring strict long-term reproducibility, a committed `Manifest.toml` tracked in Git remains standard practice.
 
 ### 2. Static include scanning vs. dynamic includes
-QuickEnv statically parses entry scripts and follows static `include("path/to/file.jl")` calls.
-- **Limitation**: Dynamic include expressions (such as `include(joinpath(@__DIR__, ARGS[1]))`) cannot be evaluated before runtime.
-- **Recommendation**: Declare package dependencies at the top of the entry script, or use `using QuickEnv # local` for multi-file local project directories.
+QuickEnv statically analyzes `include("path/to/file.jl")` calls before execution to discover dependencies across included files.
+* **Limitation**: Dynamic include expressions (such as `include(joinpath(@__DIR__, ARGS[1]))`) cannot be evaluated prior to runtime.
+* **Recommendation**: Declare dependencies at the top of the entry script, or use `using QuickEnv # local` for multi-file local project folders.
 
-### 3. Nested package imports
-Submodule imports (such as `using HTTP.WebSockets` or `import DataFrames.DataFrame`) are automatically parsed and mapped to the parent registered package (`HTTP`, `DataFrames`).
+### 3. Submodule imports
+Submodule imports (such as `using HTTP.WebSockets` or `import DataFrames.DataFrame`) are automatically parsed and mapped to their registered root packages (`HTTP`, `DataFrames`).
 
-### 4. Failure handling & concurrency
-- **Self-Healing Cache**: If a script exits with an unhandled exception, QuickEnv invalidates the script's cache entry, prompting a full re-resolution on the next run.
-- **Atomic Writes**: Cache updates and compound environment files are written to PID-isolated temporary files before atomic replacement (`mv`), avoiding partial writes during concurrent script execution.
+> For a pros vs. cons analysis and startup performance comparison, see **[docs/tradeoffs.md](docs/tradeoffs.md)**.
+> Details on failure handling (`atexit` self-healing invalidation) and atomic POSIX writes are documented in **[docs/DESIGN.md](docs/DESIGN.md)**.
 
 ---
 
