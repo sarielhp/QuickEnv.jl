@@ -65,69 +65,22 @@ Out of the box, Julia includes the standard versioned global environment (e.g., 
 
 ---
 
-## Configuration & Magic Comments
+## Optional Configuration (Magic Comments)
 
-QuickEnv supports configuration via inline or standalone comments.
-
-### 1. Compact Inline Format (Recommended)
-Options can be specified on the `using QuickEnv` line:
+QuickEnv requires no configuration for typical usage. However, power users can supply optional directives via inline comments:
 
 ```julia
-using QuickEnv # fallback: plotting, exclude: global, silent, create: data, desc: "Data analysis environment"
+using QuickEnv # fallback: plotting, exclude: global, silent
 ```
 
-### 2. Standalone Comment Directives
+Common directives include:
+- `# fallback: <env>` — Target a specific named environment if no match exists.
+- `# create: <env>` — Force QuickEnv to use and manage a specific named environment.
+- `# local` — Activate the script's local directory as `--project=.`.
+- `# exclude: global` — Avoid matching the global environment (`@v1.x`).
+- `# silent` / `# verbose` — Configure output logging levels.
 
-#### Forced Environment Creation (`create`)
-Forces `QuickEnv` to use a specific named environment (e.g., `@science`), creating it if it does not exist and installing any missing packages:
-```julia
-# QuickEnv.create: science
-```
-or inline:
-```julia
-using QuickEnv # create: science
-```
-
-#### Fallback Environment (`fallback`)
-Searches existing named environments first. If no existing environment satisfies the script's imports, it bootstraps the specified fallback (e.g., `@plotting`):
-```julia
-# quickenv_fallback: plotting
-```
-or inline:
-```julia
-using QuickEnv # fallback: plotting
-```
-
-#### Environment Description (`desc` / `description`)
-Attaches a human-readable description to the target environment's `Project.toml`:
-```julia
-# QuickEnv.desc: Environment with plotting and data tools
-```
-
-#### Excluded Environments (`exclude`)
-Prevents specific environments from being selected. Using `global` excludes standard versioned environments (e.g., `@v1.12`):
-```julia
-# quickenv_exclude: global, broken_plotting
-```
-
-#### Local Directory Project (`# local`)
-Directs QuickEnv to activate the script's local directory as the project (equivalent to `julia --project=. script.jl`):
-```julia
-using QuickEnv # local
-```
-
-#### Logging Verbosity (`verbose` / `silent`)
-- **Default**: Runs quietly on matching runs; outputs informative logs when creating environments or installing packages.
-- **Verbose**: Logs detailed matching, candidate scoring, and timing info:
-  ```julia
-  using QuickEnv # verbose
-  # or export QUICKENV_VERBOSE=true
-  ```
-- **Silent**: Suppresses all non-error output:
-  ```julia
-  using QuickEnv # silent
-  # or export QUICKENV_SILENT=true
-  ```
+> For the complete reference of all available magic comments and standalone directives (`# desc:`, multiline formats, environment variables), see the **[Configuration Guide](docs/README.md#optional-configuration-magic-comments-reference)**.
 
 ---
 

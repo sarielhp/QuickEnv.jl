@@ -1,6 +1,6 @@
-# QuickEnv.jl User Guide
+# QuickEnv.jl User Guide & Configuration Manual
 
-`QuickEnv.jl` is a zero-configuration auto-bootstrapping utility package that dynamically manages, matches, and activates Julia environments. It is designed to bring Pluto-like automatic package management elegance to standard standalone `.jl` scripts.
+`QuickEnv.jl` is a zero-configuration auto-bootstrapping utility that dynamically manages, matches, and activates Julia package environments. It brings a set-and-forget package management workflow to standalone `.jl` scripts.
 
 > **Related Documentation**:
 > - **[Architecture & Design Deep-Dive](DESIGN.md)**: Fast stitching vs. stacking, bitmask solver, caching internals.
@@ -9,69 +9,26 @@
 
 ---
 
-## Features
-
-- **Automated Named Environment Matching**: Scans your running script for `using`/`import` statements and matches them against existing named environments globally (under `~/.julia/environments/`).
-- **Disk-Space & Compile Time Saving**: Reuses globally compiled packages rather than forcing package reinstalls/compilations inside local directories for every quick script.
-- **Fast Compound Stitching & Bitmask Set-Cover**: Autonomously discovers minimal combinations of environments covering dependencies and stitches them into `@auto_<hash>` in <5ms without recompilation.
-- **State-Aware & Script-Level Caching**: O(1) cache lookup based on script modification times (`mtime`) and dependency hashes in `~/.julia/quickenv/cache.toml`.
-- **Smart Typo & Casing Diagnostics**: Checks unregistered imports against local environments, stdlibs, and the General Registry to suggest fixes (e.g. `using cairo` -> `using Cairo`).
-- **Forced Environment Management (`QuickEnv.create`)**: Forces `QuickEnv` to use and manage a specific named environment, automatically creating it or adding missing dependencies.
-- **Custom Environment Descriptions**: Easily set or update environment descriptions via `desc: "..."` or `# QuickEnv.desc: ...`.
-- **Dynamic Fallbacks**: Supports explicitly declaring a fallback environment to compile inside if no current environments satisfy the script's imports.
-- **Automatic Bootstrapping**: If no matching named environments exist, it creates an autonomous `@auto_<hash>` environment (or fallback named environment) and installs missing package dependencies using `Pkg.add`.
-- **Exclusion Filters**: Supports custom comments to restrict specific environments or standard global ones from being used.
-- **Silent & Verbose Modes**: Silent by default on matching runs; configure logging level via `# silent` or `# verbose`.
-
----
-
 ## Installation
 
-Add `QuickEnv` to your **global** Julia environment so it can be loaded from any script:
+Install `QuickEnv` once in your **global** Julia environment so it is accessible to all scripts:
 
 ```julia
 using Pkg
-Pkg.activate() # Activates global env (e.g. @v1.12)
+Pkg.activate() # Activates global environment (e.g. @v1.12)
 Pkg.add(url="https://github.com/sarielhp/QuickEnv.jl.git")
 ```
 
 ---
 
-## Magic Comments Syntax
+## Standard Zero-Configuration Usage
 
-You can configure `QuickEnv` directly inside the comments of your Julia script. These comments are completely ignored by the standard Julia parser, making them 100% syntactically safe and standard.
-
-### 1. Compact Inline Format (Recommended)
-You can declare fallback named environments, exclusions, descriptions, verbosity flags, and forced environment creation all on the same line as your import:
+In standard usage, no configuration comments or command-line flags are required. Simply place `using QuickEnv` as the first import in your script:
 
 ```julia
-using QuickEnv # fallback: plotting, exclude: global, silent, create: data, desc: "Data analysis environment"
-```
-
-### 2. Standalone Multiline Format
-You can also declare these options on individual lines before the package loads:
-
-- **Forced environment**: `# QuickEnv.create: data`
-- **Fallback target**: `# quickenv_fallback: plotting`
-- **Exclusions**: `# quickenv_exclude: global, broken_plotting`
-- **Environment description**: `# QuickEnv.desc: Data analysis tools`
-- **Local directory mode**: `using QuickEnv # local`
-- **Silent Mode**: `# quickenv_silent: true` or `# silent`
-- **Verbose Mode**: `# quickenv_verbose: true` or `# verbose`
-
-*Note on `QuickEnv.create` behavior: If the target environment already satisfies all dependencies, it runs silently (if requested). If any packages are missing and need to be installed, a description of the setup is printed before `Pkg` modifies the environment.*
-
----
-
-## Usage Example
-
-Simply place `using QuickEnv` at the very beginning of your Julia scripts:
-
-```julia
-using QuickEnv # fallback: plotting, exclude: global
-
-using Plots
-using Cairo
+#!/usr/bin/env julia
+using QuickEnv
+using Plots, DataFrames
 
 function (@main)(args)
     # Your script code here...
@@ -79,9 +36,105 @@ function (@main)(args)
 end
 ```
 
-### How it executes under the hood:
-1. `using QuickEnv` runs.
-2. `QuickEnv`'s `__init__()` scans the script for imported packages (`Plots` and `Cairo`), the fallback request (`plotting`), and the exclusion rules (`global` is excluded).
-3. It finds or fast-stitches a matching named environment (e.g., `@plotting` or `@auto_<hash>`) and dynamically updates Julia's active project.
-4. Subsequent lines like `using Plots` load instantly using the activated environment.
-5. If no matching environment existed, it automatically bootstraps `@plotting` and installs `Plots` and `Cairo` before executing the rest of the script.
+QuickEnv automatically inspects imports, finds or fast-stitches a matching named environment in `~/.julia/environments/`, installs any missing packages into isolated environments, and activates the project before your code runs.
+
+---
+
+## Optional Configuration: Magic Comments Reference
+
+For power users who need fine-grained control over environment resolution, QuickEnv supports optional directives via inline or standalone comments. These comments are completely ignored by the standard Julia parser, making them 100% syntactically safe.
+
+### 1. Compact Inline Format (Recommended)
+
+Directives can be specified directly on the `using QuickEnv` line separated by commas:
+
+```julia
+using QuickEnv # fallback: plotting, exclude: global, silent, create: data, desc: "Data analysis environment"
+```
+
+---
+
+### 2. Standalone Comment Directives
+
+Directives can also be written on individual comment lines at the top of the file:
+
+#### A. Forced Environment Creation (`create`)
+Forces `QuickEnv` to use a specific named environment (e.g., `@science`). It creates `@science` if it does not exist and installs missing packages into it:
+```julia
+# QuickEnv.create: science
+```
+or inline:
+```julia
+using QuickEnv # create: science
+```
+
+#### B. Fallback Target Environment (`fallback`)
+Searches existing named environments first. If no existing environment satisfies all imports, it creates and bootstraps the specified fallback named environment (e.g., `@plotting`) instead of an autonomous `@auto_<hash>` environment:
+```julia
+# quickenv_fallback: plotting
+```
+or inline:
+```julia
+using QuickEnv # fallback: plotting
+```
+
+#### C. Environment Description (`desc` / `description`)
+Writes a human-readable description string into the target environment's `Project.toml`:
+```julia
+# QuickEnv.desc: Environment with plotting and data tools
+```
+or inline:
+```julia
+using QuickEnv # desc: "Data analysis tools"
+```
+
+#### D. Excluded Environments (`exclude`)
+Prevents specific environments from being considered during matching. Using `global` acts as a wildcard excluding standard versioned environments (e.g., `@v1.12`):
+```julia
+# quickenv_exclude: global, broken_plotting
+```
+or inline:
+```julia
+using QuickEnv # exclude: global
+```
+
+#### E. Local Directory Project Mode (`# local`)
+Directs QuickEnv to activate the script's local folder as the project (equivalent to `julia --project=. script.jl`):
+```julia
+using QuickEnv # local
+```
+or standalone:
+```julia
+# quickenv_local: true
+```
+
+#### F. Logging Verbosity (`verbose` / `silent`)
+* **Default Mode**: Runs quietly when matching existing environments; prints informative notifications when creating new environments or installing packages.
+* **Verbose Mode**: Prints detailed matching, candidate scoring, and timing details:
+  ```julia
+  using QuickEnv # verbose
+  ```
+  or environment variable:
+  ```bash
+  export QUICKENV_VERBOSE=true
+  ```
+* **Silent Mode**: Suppresses all non-error logging:
+  ```julia
+  using QuickEnv # silent
+  ```
+  or environment variable:
+  ```bash
+  export QUICKENV_SILENT=true
+  ```
+
+---
+
+## Detailed Execution Lifecycle
+
+When `using QuickEnv` runs in a script:
+1. **Script Parsing**: Statically scans the top-level script (and statically included `.jl` files) for `using`/`import` statements and magic comments.
+2. **Script-Level Cache Check ($O(1)$)**: Checks if the script path and modification timestamp (`mtime`) match a known valid environment in `~/.julia/quickenv/cache.toml`.
+3. **Existing Environment Match**: Checks if any single named environment in `~/.julia/environments/` satisfies all requested packages.
+4. **Bitmask Set-Cover & Fast Manifest Stitching (<5ms)**: Finds minimal compatible combinations of existing environments and synthesizes a merged `Project.toml` and `Manifest.toml` into `@auto_<hash>` without Pkg SAT solving or recompilation.
+5. **Partial Stitching & Incremental Bootstrap**: Pre-stitches known package manifests and runs `Pkg.add` only for new missing dependencies.
+6. **Project Activation**: Activates the resolved project via Julia's internal `Base.set_active_project`.
