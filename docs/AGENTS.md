@@ -77,3 +77,20 @@ To suppress informational environment setup messages when running automated agen
 using QuickEnv # silent
 using JSON, HTTP
 ```
+
+---
+
+## 5. Token Efficiency: Eliminating Multi-Turn Error Loops
+
+For autonomous AI coding agents, QuickEnv significantly reduces LLM context window consumption and API round-trips:
+
+### The Multi-Turn Agent Loop Without QuickEnv:
+1. **Turn 1 (Execution)**: Agent runs `julia script.jl`.
+2. **Turn 2 (Error)**: Fails with `ERROR: ArgumentError: Package Plots not found`. *(+250 context tokens)*
+3. **Turn 3 (Troubleshooting)**: Agent reasons about missing packages and executes `julia -e 'using Pkg; Pkg.add("Plots")'`. Pkg emits hundreds of progress bar characters, registry update messages, and precompilation logs. *(+800–2,000 context tokens)*
+4. **Turn 4 (Retry)**: Agent re-runs the script.
+* **Total Cost**: **3 extra tool round-trips and 1,500–4,000+ wasted context tokens**.
+
+### Single-Turn Execution With QuickEnv:
+1. **Turn 1 (Execution)**: Agent writes `using QuickEnv; using Plots` and runs `julia script.jl`. QuickEnv automatically discovers or bootstraps the environment in the background.
+* **Total Cost**: **1 tool call, 0 retry turns, and 0 wasted tokens**.

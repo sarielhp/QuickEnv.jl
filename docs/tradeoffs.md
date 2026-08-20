@@ -76,6 +76,8 @@ When a script requires packages that are only partially covered by existing envi
    * Identifies package casing mismatches (e.g., `using cairo` vs `using Cairo`) and typos against the General Registry before failure.
 7. **Near-Zero Disk Footprint for Environments**:
    * In Julia's content-addressed architecture, environments contain only tiny text pointers (`Project.toml` / `Manifest.toml`). Creating dozens of dedicated or auto-generated environments costs only kilobytes of disk space and duplicates zero package code or compiled binaries.
+8. **LLM Context & Token Efficiency for AI Agents**:
+   * Eliminates multi-turn package error-retry loops and verbose `Pkg.add` terminal output in AI coding agent context windows, saving thousands of tokens per task. (See **[docs/AGENTS.md](AGENTS.md#5-token-efficiency-eliminating-multi-turn-error-loops)**).
 
 ---
 
