@@ -5,6 +5,7 @@
 > **Related Documentation**:
 > - **[Architecture & Design Deep-Dive](DESIGN.md)**: Fast stitching vs. stacking, bitmask solver, caching internals.
 > - **[Tradeoffs Analysis](tradeoffs.md)**: Pros vs. cons and startup performance comparison.
+> - **[Why Recompilation Happens & FAQ](faq_recompile.md)**: Deep-dive into Julia precompilation mechanics and how QuickEnv guarantees zero recompilation.
 > - **[`jlenv` CLI Manual](jlenv.md)**: Command reference for environment inspection and housekeeping.
 > - **[Guidelines for AI Agents](AGENTS.md)**: System prompts and instructions for AI coding assistants.
 

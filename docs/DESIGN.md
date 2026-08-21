@@ -61,6 +61,8 @@ When QuickEnv stitches `@plotting` and `@data`:
 2. **Synthesis (`~1–2ms`)**: Atomically writes a unified `Project.toml` and `Manifest.toml` into `~/.julia/environments/auto_<hash>/`.
 3. **Instant Loading (`0ms recompilation`)**: Julia's code loader inspects the new manifest, matches the `git-tree-sha1` hashes to existing `.ji` cache files, and loads packages immediately with zero compilation overhead.
 
+> For a detailed FAQ on Julia's precompilation caching mechanics and why standard projects unexpectedly recompile, see **[docs/faq_recompile.md](faq_recompile.md)**.
+
 ---
 
 ## 3. The Bitmask Set-Cover Engine
