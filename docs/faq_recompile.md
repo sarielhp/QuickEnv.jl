@@ -1,5 +1,7 @@
 # FAQ: Why Recompilation Happens in Julia, and What QuickEnv Does About It
 
+> **Disclaimer**: This FAQ was written by an AI agent (Gemini / Antigravity) based on discussions, questions, and feedback from the Julia Discourse community.
+
 A frequent source of confusion among Julia developers is unexpected package precompilation. You sit down to run a script you ran yesterday—without modifying any code or running `Pkg.update`—yet Julia pauses and prints:
 
 ```text
