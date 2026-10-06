@@ -21,7 +21,7 @@ After installing `QuickEnv` once in your global environment (`@v1.x`), simply ad
 ```julia
 using Pkg
 Pkg.activate()  # Activate standard global environment (e.g., @v1.12)
-Pkg.add(url="https://github.com/sarielhp/QuickEnv.jl.git")
+Pkg.add("QuickEnv")
 ```
 
 ### 2. Add `using QuickEnv` to the top of your script
@@ -48,7 +48,7 @@ When you execute `julia your_script.jl` or `./your_script.jl`:
 Julia package environments typically follow one of three approaches:
 
 1. **Global Environment (`@v1.x`)**: Convenient initially, but installing packages directly into `@v1.x` eventually leads to **dependency conflicts** across unrelated scripts and slower startup times.
-2. **Local Directory Projects (`--project=.`)**: Provides project isolation, but litters working directories with `Project.toml` / `Manifest.toml` files for one-off scripts and duplicates package precompilations.
+2. **Local Directory Projects (`--project=.`)**: Provides explicit, reproducible project isolation, but creates `Project.toml` / `Manifest.toml` files that may be more ceremony than desired for one-off scripts. Julia can reuse compatible package sources, artifacts, and compile caches across environments.
 3. **Shared Named Environments (`@plotting`, `@data`)**: Stores reusable environments under `~/.julia/environments/`, but requires manually remembering and passing `--project=@env` flags on every run.
 
 **QuickEnv provides the advantages of all three:**
@@ -56,6 +56,23 @@ Julia package environments typically follow one of three approaches:
 - **Autonomous Named Selection**: Automatically finds or synthesizes the right named environment in `~/.julia/environments/`.
 - **Fast Compound Stitching**: Combines compatible environments without running Pkg's resolver. Julia may still compile if a cache is absent, evicted, or incompatible with the current runtime flags.
 - **Local Project Mode**: Supports `# local` whenever you want the local directory activated as `--project=.`.
+
+---
+
+## Choosing an Environment Workflow
+
+QuickEnv is aimed at standalone scripts where convenience matters more than committing an exact environment alongside the code. It complements Julia's standard project workflow rather than replacing it.
+
+| Approach | Best suited to | Dependency model | Main tradeoff |
+| --- | --- | --- | --- |
+| **QuickEnv** | Standalone scripts and exploratory tools | Infers imports, then reuses or creates an isolated named environment | Resolution is automatic; it is not a substitute for a committed manifest when exact reproducibility matters |
+| **`julia --project=.`** | Applications, research projects, and packages | Explicit `Project.toml` and optional committed `Manifest.toml` | Most reproducible and conventional, but requires managing project files and launch flags |
+| **`Pkg.activate(; temp=true)`** | Disposable REPL experiments | Explicit packages in a temporary environment | Leaves no project clutter, but the environment is discarded after the session |
+| **[DrWatson `@quickactivate`](https://juliadynamics.github.io/DrWatson.jl/stable/project/)** | Structured project-based research workflows | Locates and activates an existing project | Excellent for managed projects; it does not infer a standalone script's environment |
+| **[ShareAdd.jl](https://github.com/Eben60/ShareAdd.jl)** | Loading packages available across existing environments | Selects packages from shared environments | Useful when environment sharing is intentional; semantics differ from QuickEnv's single realized target project |
+| **[SelfContainedScripts.jl](https://github.com/cjdoris/SelfContainedScripts.jl)** | Scripts that should carry an explicit project declaration | Embeds project metadata in the script | More explicit and portable, with more metadata in each script |
+
+Use a normal committed Julia project for libraries, production services, or research artifacts that must reproduce an exact dependency graph. Use QuickEnv when the desired interface is simply `using QuickEnv` followed by ordinary imports.
 
 ---
 
