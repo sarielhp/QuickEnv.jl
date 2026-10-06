@@ -2,6 +2,11 @@
 
 All notable changes to the `QuickEnv` package will be documented in this file.
 
+## [0.4.2] - 2026-10-05
+
+### Added
+- **Prefix and Truncation Matching in Package Diagnostics**: Extended `diagnose_and_suggest_packages` to detect prefix and truncation discrepancies against known local environments (stdlibs, named environments) and the Julia General Registry. Catches common abbreviations and truncations (e.g., `BasicCompGeom` $\rightarrow$ `BasicCompGeometry`, `LinearAlg` $\rightarrow$ `LinearAlgebra`) when packages are missing or fail to install.
+
 ## [0.4.1] - 2026-08-20
 
 ### Documentation

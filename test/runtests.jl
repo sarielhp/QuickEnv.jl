@@ -352,6 +352,11 @@ using Pkg
             QuickEnv.diagnose_and_suggest_packages(["Dats"], false)
         end
 
+        # 4b. Warning on prefix/truncation (e.g. 'LinearAlg' -> 'LinearAlgebra')
+        @test_logs (:warn, r"Did you mean 'LinearAlgebra'"s) begin
+            QuickEnv.diagnose_and_suggest_packages(["LinearAlg"], false)
+        end
+
         # 5. Fast path: no warnings on valid stdlib packages
         @test_logs begin
             QuickEnv.diagnose_and_suggest_packages(["LinearAlgebra", "Dates"], false)

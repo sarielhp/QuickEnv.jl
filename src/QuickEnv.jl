@@ -633,6 +633,28 @@ function diagnose_and_suggest_packages(imported_packages::Vector{String}, is_sil
             end
         end
 
+        # Prefix / truncation check in known local environments
+        # Catches common abbreviations or truncations (e.g. BasicCompGeom -> BasicCompGeometry)
+        if suggestion === nothing && length(pkg) >= 4
+            prefix_candidates = String[]
+            pkg_lower = lowercase(pkg)
+            for cand in known_local
+                cand_lower = lowercase(cand)
+                if (startswith(cand_lower, pkg_lower) || startswith(pkg_lower, cand_lower)) &&
+                   abs(length(cand) - length(pkg)) <= 6
+                    push!(prefix_candidates, cand)
+                end
+            end
+            if length(prefix_candidates) == 1
+                suggestion = first(prefix_candidates)
+            elseif length(prefix_candidates) > 1
+                sort!(prefix_candidates, by = c -> abs(length(c) - length(pkg)))
+                if abs(length(prefix_candidates[1]) - length(pkg)) < abs(length(prefix_candidates[2]) - length(pkg))
+                    suggestion = first(prefix_candidates)
+                end
+            end
+        end
+
         if suggestion === nothing
             if !registry_loaded
                 try
@@ -696,6 +718,23 @@ function diagnose_and_suggest_packages(imported_packages::Vector{String}, is_sil
                             suggestion = cand
                         end
                     end
+                end
+            end
+
+            # Prefix / truncation check in General registry (requires unique match)
+            if suggestion === nothing && length(pkg) >= 5
+                reg_prefix_candidates = String[]
+                pkg_lower = lowercase(pkg)
+                for cand in registry_pkgs
+                    cand_lower = lowercase(cand)
+                    if (startswith(cand_lower, pkg_lower) || startswith(pkg_lower, cand_lower)) &&
+                       abs(length(cand) - length(pkg)) <= 4
+                        push!(reg_prefix_candidates, cand)
+                        length(reg_prefix_candidates) > 1 && break
+                    end
+                end
+                if length(reg_prefix_candidates) == 1
+                    suggestion = first(reg_prefix_candidates)
                 end
             end
         end
