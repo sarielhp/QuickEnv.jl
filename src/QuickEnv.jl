@@ -1,6 +1,23 @@
 module QuickEnv
 
 using TOML
+using SHA
+using FileWatching: Pidfile
+
+function isolate_load_path!()
+    lowercase(get(ENV, "QUICKENV_ISOLATE_LOAD_PATH", "false")) == "true" ||
+        return nothing
+    filter!(entry -> !startswith(entry, "@v"), LOAD_PATH)
+    "@" in LOAD_PATH || pushfirst!(LOAD_PATH, "@")
+    "@stdlib" in LOAD_PATH || push!(LOAD_PATH, "@stdlib")
+    package_root = dirname(@__DIR__)
+    if package_root ∉ LOAD_PATH
+        stdlib_index = findfirst(==("@stdlib"), LOAD_PATH)
+        stdlib_index === nothing ? push!(LOAD_PATH, package_root) :
+            insert!(LOAD_PATH, stdlib_index, package_root)
+    end
+    return nothing
+end
 
 # =============================================================================
 # Path & Script Utilities
@@ -13,42 +30,47 @@ Retrieve the absolute path to the currently executing Julia script. Returns an
 empty string if Julia is running interactively.
 """
 function get_script_path()
-    script_path = PROGRAM_FILE
-    if isempty(script_path)
-        sp = Base.source_path()
-        script_path = sp !== nothing ? sp : ""
+    if !isempty(PROGRAM_FILE)
+        return abspath(PROGRAM_FILE)
     end
-    return isempty(script_path) ? "" : abspath(script_path)
+    source_path = Base.source_path(nothing)
+    if source_path !== nothing && !isempty(source_path)
+        resolved = abspath(source_path)
+        isfile(resolved) && !startswith(resolved, @__DIR__) && return resolved
+    end
+    for frame in stacktrace()
+        raw_path = String(frame.file)
+        raw_path in ("none", "REPL", "client.jl", "loading.jl") && continue
+        resolved = abspath(raw_path)
+        isfile(resolved) && !startswith(resolved, @__DIR__) && return resolved
+    end
+    return ""
 end
 
 function activate_shared_env(env_name::String)
     env_dir = joinpath(DEPOT_PATH[1], "environments", env_name)
-    proj_file = if isfile(joinpath(env_dir, "JuliaProject.toml"))
-        joinpath(env_dir, "JuliaProject.toml")
-    else
-        joinpath(env_dir, "Project.toml")
-    end
-    if !isfile(proj_file)
+    project = isfile(joinpath(env_dir, "JuliaProject.toml")) ?
+        joinpath(env_dir, "JuliaProject.toml") : joinpath(env_dir, "Project.toml")
+    if !isfile(project)
         mkpath(env_dir)
-        touch(proj_file)
+        touch(project)
     end
-    return Base.set_active_project(proj_file)
+    Base.set_active_project(project)
+    isolate_load_path!()
+    return Base.active_project()
 end
 
 function activate_local_dir_env(dir_path::String)
-    proj_file = if isfile(joinpath(dir_path, "JuliaProject.toml"))
-        joinpath(dir_path, "JuliaProject.toml")
-    else
-        joinpath(dir_path, "Project.toml")
-    end
-    if !isfile(proj_file)
-        touch(proj_file)
-    end
-    return Base.set_active_project(proj_file)
+    project = isfile(joinpath(dir_path, "JuliaProject.toml")) ?
+        joinpath(dir_path, "JuliaProject.toml") : joinpath(dir_path, "Project.toml")
+    isfile(project) || touch(project)
+    Base.set_active_project(project)
+    isolate_load_path!()
+    return Base.active_project()
 end
 
 # =============================================================================
-# Cache Subsystem (O(1) State-Aware Hashing & Fast Script Cache)
+# Cache Subsystem (Content-Validated Script and Resolution Caches)
 # =============================================================================
 
 function get_cache_dir()
@@ -64,8 +86,57 @@ function get_canonical_key(packages::Vector{String})
 end
 
 function get_cache_hash(key::String)
-    h = string(hash(key); base=16)
-    return h[1:min(12, length(h))]
+    return bytes2hex(sha256(key))[1:12]
+end
+
+file_digest(path::String) = isfile(path) ? bytes2hex(sha256(read(path))) : ""
+
+function project_resolution_digest(path::String)
+    isfile(path) || return ""
+    try
+        project = TOML.parsefile(path)
+        relevant = Dict(
+            key => project[key] for key in
+            ("deps", "compat", "sources", "weakdeps", "extensions", "quickenv_sources") if
+            haskey(project, key)
+        )
+        io = IOBuffer()
+        TOML.print(io, relevant; sorted=true)
+        return bytes2hex(sha256(take!(io)))
+    catch
+        return ""
+    end
+end
+
+function environment_digest(env_name::String)
+    env_dir = joinpath(DEPOT_PATH[1], "environments", env_name)
+    project = joinpath(env_dir, "Project.toml")
+    manifest = joinpath(env_dir, "Manifest.toml")
+    (!isfile(project) || !isfile(manifest)) && return ""
+    project_digest = project_resolution_digest(project)
+    isempty(project_digest) && return ""
+    return bytes2hex(sha256(project_digest * ":" * file_digest(manifest)))[1:24]
+end
+
+function environment_sources(env_name::String)
+    project = joinpath(DEPOT_PATH[1], "environments", env_name, "Project.toml")
+    isfile(project) || return String[]
+    try
+        return String.(get(TOML.parsefile(project), "quickenv_sources", String[]))
+    catch
+        return String[]
+    end
+end
+
+function with_cache_lock(f::Function)
+    try
+        cdir = get_cache_dir()
+        mkpath(cdir)
+        return Pidfile.mkpidlock(f, joinpath(cdir, "cache.pid"); stale_age=10)
+    catch e
+        @debug "QuickEnv: Cache operation unavailable" exception=e
+        return nothing
+    end
 end
 
 function load_cache()
@@ -81,7 +152,7 @@ function load_cache()
     return Dict{String,Any}()
 end
 
-function save_cache(cache_data::Dict{String,Any})
+function save_cache_unlocked(cache_data::Dict{String,Any})
     cdir = get_cache_dir()
     mkpath(cdir)
     cfile = get_cache_file()
@@ -97,13 +168,23 @@ function save_cache(cache_data::Dict{String,Any})
     end
 end
 
+function save_cache(cache_data::Dict{String,Any})
+    return with_cache_lock() do
+        save_cache_unlocked(cache_data)
+    end
+end
+
+function script_files(script_path::String)
+    files = String[]
+    discover_script_files!(files, abspath(script_path), Set{String}())
+    return files
+end
+
 """
     check_script_cache_hit(script_path::String) -> Union{Nothing, String}
 
-Super-fast O(1) script cache lookup by script absolute path and mtime.
-If the script file hasn't changed since its last execution and its target
-environment still exists, immediately returns the target environment without
-needing to parse file contents or run regexes.
+Validate the cached entry script, static includes, target environment, and
+stitch sources by content digest before returning the target environment.
 """
 function check_script_cache_hit(script_path::String)
     isempty(script_path) && return nothing
@@ -111,18 +192,30 @@ function check_script_cache_hit(script_path::String)
 
     cache = load_cache()
     scripts_table = get(cache, "scripts", Dict{String,Any}())
+    scripts_table isa AbstractDict || return nothing
     !haskey(scripts_table, script_path) && return nothing
 
     entry = scripts_table[script_path]
-    cached_mtime = get(entry, "mtime", 0.0)
-    current_mtime = mtime(script_path)
-    if cached_mtime == current_mtime
+    entry isa AbstractDict || return nothing
+    cached_files = get(entry, "files", String[])
+    cached_digests = get(entry, "digests", String[])
+    sources = get(entry, "sources", String[])
+    source_digests = get(entry, "source_digests", String[])
+    valid_vectors = cached_files isa Vector && cached_digests isa Vector &&
+        sources isa Vector && source_digests isa Vector &&
+        all(item -> item isa String, cached_files) &&
+        all(item -> item isa String, cached_digests) &&
+        all(item -> item isa String, sources) &&
+        all(item -> item isa String, source_digests)
+    if valid_vectors && !isempty(cached_files) &&
+       length(cached_files) == length(cached_digests) &&
+       all(isfile(path) && file_digest(path) == digest for (path, digest) in zip(cached_files, cached_digests))
         target_env = get(entry, "env", "")
-        if !isempty(target_env)
-            target_proj = joinpath(
-                DEPOT_PATH[1], "environments", target_env, "Project.toml"
-            )
-            if isfile(target_proj)
+        if target_env isa String && !isempty(target_env)
+            current_env_digest = environment_digest(target_env)
+            if !isempty(current_env_digest) &&
+               current_env_digest == get(entry, "env_digest", "") &&
+               environment_digest.(sources) == source_digests
                 return target_env
             end
         end
@@ -134,13 +227,24 @@ function update_script_cache_entry(script_path::String, env_name::String)
     isempty(script_path) && return nothing
     !isfile(script_path) && return nothing
 
-    cache = load_cache()
-    scripts_table = get(cache, "scripts", Dict{String,Any}())
-    scripts_table[script_path] = Dict{String,Any}(
-        "mtime" => mtime(script_path), "env" => env_name, "updated_at" => string(time())
-    )
-    cache["scripts"] = scripts_table
-    return save_cache(cache)
+    files = script_files(script_path)
+    return with_cache_lock() do
+        cache = load_cache()
+        scripts_table = get(cache, "scripts", Dict{String,Any}())
+        scripts_table isa AbstractDict || (scripts_table = Dict{String,Any}())
+        sources = environment_sources(env_name)
+        scripts_table[script_path] = Dict{String,Any}(
+            "files" => files,
+            "digests" => file_digest.(files),
+            "env" => env_name,
+            "env_digest" => environment_digest(env_name),
+            "sources" => sources,
+            "source_digests" => environment_digest.(sources),
+            "updated_at" => string(time()),
+        )
+        cache["scripts"] = scripts_table
+        save_cache_unlocked(cache)
+    end
 end
 
 """
@@ -152,12 +256,15 @@ modified multi-file dependencies trigger a fresh resolution.
 """
 function invalidate_script_cache(script_path::String)
     isempty(script_path) && return nothing
-    cache = load_cache()
-    scripts_table = get(cache, "scripts", Dict{String,Any}())
-    if haskey(scripts_table, script_path)
-        delete!(scripts_table, script_path)
-        cache["scripts"] = scripts_table
-        save_cache(cache)
+    return with_cache_lock() do
+        cache = load_cache()
+        scripts_table = get(cache, "scripts", Dict{String,Any}())
+        scripts_table isa AbstractDict || return nothing
+        if haskey(scripts_table, script_path)
+            delete!(scripts_table, script_path)
+            cache["scripts"] = scripts_table
+            save_cache_unlocked(cache)
+        end
     end
 end
 
@@ -175,23 +282,28 @@ function check_cache_hit(required_packages::Vector{String})
     !haskey(cache, key) && return nothing
 
     entry = cache[key]
+    entry isa AbstractDict || return nothing
     env_name = get(entry, "env", "")
     sources = get(entry, "sources", String[])
-    cached_mtimes = get(entry, "mtimes", Float64[])
+    cached_digests = get(entry, "source_digests", String[])
 
+    env_name isa String || return nothing
+    sources isa Vector && all(item -> item isa String, sources) || return nothing
+    cached_digests isa Vector && all(item -> item isa String, cached_digests) || return nothing
     isempty(env_name) && return nothing
 
     # Verify target environment exists
     target_dir = joinpath(DEPOT_PATH[1], "environments", env_name)
-    !isdir(target_dir) && return nothing
+    !isfile(joinpath(target_dir, "Project.toml")) && return nothing
+    !isfile(joinpath(target_dir, "Manifest.toml")) && return nothing
+    environment_digest(env_name) != get(entry, "target_digest", "") && return nothing
 
-    # Verify all source environments still exist with matching mtimes
-    if length(sources) != length(cached_mtimes)
+    # Verify all source environments still exist with matching content digests
+    if length(sources) != length(cached_digests)
         return nothing # Corrupted cache entry
     end
     for i in 1:length(sources)
-        s_manifest = joinpath(DEPOT_PATH[1], "environments", sources[i], "Manifest.toml")
-        if !isfile(s_manifest) || mtime(s_manifest) != cached_mtimes[i]
+        if environment_digest(sources[i]) != cached_digests[i]
             return nothing # Cache stale!
         end
     end
@@ -204,25 +316,21 @@ function update_cache_entry(
 )
     isempty(required_packages) && return nothing
     key = get_canonical_key(required_packages)
-    cache = load_cache()
-
-    mtimes = Float64[]
-    for s in source_envs
-        s_manifest = joinpath(DEPOT_PATH[1], "environments", s, "Manifest.toml")
-        push!(mtimes, isfile(s_manifest) ? mtime(s_manifest) : 0.0)
+    return with_cache_lock() do
+        cache = load_cache()
+        cache[key] = Dict(
+            "env" => target_env,
+            "sources" => source_envs,
+            "source_digests" => environment_digest.(source_envs),
+            "target_digest" => environment_digest(target_env),
+            "updated_at" => string(time()),
+        )
+        save_cache_unlocked(cache)
     end
-
-    cache[key] = Dict(
-        "env" => target_env,
-        "sources" => source_envs,
-        "mtimes" => mtimes,
-        "updated_at" => string(time()),
-    )
-    return save_cache(cache)
 end
 
 # =============================================================================
-# Bitmask Greedy Set-Cover Engine
+# Time-Bounded Bitmask Cover Engine
 # =============================================================================
 
 """
@@ -232,20 +340,20 @@ end
         timeout_sec::Float64=1.0,
     ) -> Vector{String}
 
-Given required packages and available candidate environments, use hardware bitmasks
-(UInt64) to find a minimal, non-polluting cover of environments. Implements a strict
-1.0s timeout: if solver execution exceeds 1s, aborts and returns an empty cover to never
-block script execution.
+Given required packages and available candidate environments, use branch-and-bound
+over UInt64 coverage masks. Minimize environment count, then extraneous direct
+dependencies. Return the best complete cover found within the time budget.
 """
 function find_minimal_covering_envs(
     required_pkgs::Vector{String},
     candidate_envs::Vector{Tuple{String,Vector{String}}};
     timeout_sec::Float64=1.0,
+    compatibility_check::Function=(_ -> true),
 )
     start_time = time()
     n = length(required_pkgs)
-    n > 64 && return String[] # Fallback if >64 packages
-    target_mask = (UInt64(1) << n) - 1
+    (n == 0 || n > 64 || timeout_sec <= 0) && return String[]
+    target_mask = n == 64 ? typemax(UInt64) : (UInt64(1) << n) - 1
 
     # Convert candidate environments to bitmasks and compute extraneous count
     env_info = Tuple{String,UInt64,Int}[] # (name, mask, extra_count)
@@ -254,10 +362,11 @@ function find_minimal_covering_envs(
             return String[]
         end
 
+        package_set = Set(pkgs)
         mask = UInt64(0)
         matched_count = 0
         for (i, p) in enumerate(required_pkgs)
-            if p in pkgs
+            if p in package_set
                 mask |= (UInt64(1) << (i - 1))
                 matched_count += 1
             end
@@ -268,37 +377,49 @@ function find_minimal_covering_envs(
         end
     end
 
-    selected = String[]
-    current_cov = UInt64(0)
+    sort!(env_info; by=info -> (-count_ones(info[2]), info[3], info[1]))
+    isempty(env_info) && return String[]
 
-    while current_cov != target_mask
-        if (time() - start_time) > timeout_sec
-            return String[]
-        end
-
-        best_env = ""
-        best_score = -1.0
-        best_mask = UInt64(0)
-
-        for (name, mask, extra_count) in env_info
-            gain = count_ones(mask & ~current_cov)
-            if gain > 0
-                # Priority score: newly covered packages divided by extraneous penalty
-                score = Float64(gain) / (Float64(extra_count) + 1.0)
-                if score > best_score
-                    best_score = score
-                    best_env = name
-                    best_mask = mask
-                end
-            end
-        end
-
-        best_score <= 0 && break
-        push!(selected, best_env)
-        current_cov |= best_mask
+    suffix_union = fill(UInt64(0), length(env_info) + 1)
+    for index in length(env_info):-1:1
+        suffix_union[index] = suffix_union[index + 1] | env_info[index][2]
     end
 
-    return current_cov == target_mask ? selected : String[]
+    best = String[]
+    best_count = Ref(typemax(Int))
+    best_extra = Ref(typemax(Int))
+    selected = String[]
+
+    function search(index::Int, coverage::UInt64, extra::Int)
+        (time() - start_time) > timeout_sec && return nothing
+        if coverage == target_mask
+            if length(selected) < best_count[] ||
+               (length(selected) == best_count[] && extra < best_extra[])
+                empty!(best)
+                append!(best, selected)
+                best_count[] = length(selected)
+                best_extra[] = extra
+            end
+            return nothing
+        end
+        index > length(env_info) && return nothing
+        length(selected) >= best_count[] && return nothing
+        (coverage | suffix_union[index]) != target_mask && return nothing
+
+        name, mask, candidate_extra = env_info[index]
+        if count_ones(mask & ~coverage) > 0
+            push!(selected, name)
+            if compatibility_check(selected)
+                search(index + 1, coverage | mask, extra + candidate_extra)
+            end
+            pop!(selected)
+        end
+        search(index + 1, coverage, extra)
+        return nothing
+    end
+
+    search(1, UInt64(0), 0)
+    return best
 end
 
 """
@@ -311,8 +432,8 @@ end
 
 Given required packages and available candidate environments, use hardware bitmasks
 to find a maximal compatible subset of environments whose packages are strictly contained
-in `required_pkgs` (when `strict_subset=true`). Starts from the greedy solution (adding
-the environment covering the largest number of uncovered packages).
+in `required_pkgs` (when `strict_subset=true`). Maximizes compatible coverage, then
+minimizes environment count and extraneous dependencies.
 Returns `(selected_covering_envs, covered_packages)`.
 """
 function find_partial_covering_envs(
@@ -320,6 +441,7 @@ function find_partial_covering_envs(
     candidate_envs::Vector{Tuple{String,Vector{String}}};
     timeout_sec::Float64=1.0,
     strict_subset::Bool=true,
+    compatibility_check::Function=(_ -> true),
 )
     start_time = time()
     n = length(required_pkgs)
@@ -351,37 +473,60 @@ function find_partial_covering_envs(
 
     isempty(valid_candidates) && return String[], String[]
 
-    # Greedy seed initialization: sort by newly coverable packages descending, then least extraneous
-    sort!(valid_candidates, by = c -> (count_ones(c[2]), -c[3]), rev=true)
+    sort!(valid_candidates; by=candidate -> (-count_ones(candidate[2]), candidate[3], candidate[1]))
+    suffix_union = fill(UInt64(0), length(valid_candidates) + 1)
+    for index in length(valid_candidates):-1:1
+        suffix_union[index] = suffix_union[index + 1] | valid_candidates[index][2]
+    end
 
     selected = String[]
-    current_cov = UInt64(0)
+    best = String[]
+    best_cov = Ref(UInt64(0))
+    best_extra = Ref(typemax(Int))
 
-    for (name, mask, _) in valid_candidates
-        if (time() - start_time) > timeout_sec
-            break
-        end
-        gain = count_ones(mask & ~current_cov)
-        if gain > 0
-            # Test manifest compatibility before adding this environment
-            test_selected = copy(selected)
-            push!(test_selected, name)
-            compat, _, _ = check_manifest_compat(test_selected)
-            if compat
-                push!(selected, name)
-                current_cov |= mask
+    function search(index::Int, coverage::UInt64, extra::Int)
+        (time() - start_time) > timeout_sec && return nothing
+        possible = coverage | suffix_union[index]
+        possible_count = count_ones(possible)
+        best_coverage_count = count_ones(best_cov[])
+        possible_count < best_coverage_count && return nothing
+        possible_count == best_coverage_count && !isempty(best) &&
+            length(selected) >= length(best) && return nothing
+        if index > length(valid_candidates)
+            coverage_count = count_ones(coverage)
+            best_count = count_ones(best_cov[])
+            if coverage_count > best_count ||
+               (coverage_count == best_count && length(selected) < length(best)) ||
+               (coverage_count == best_count && length(selected) == length(best) && extra < best_extra[])
+                best_cov[] = coverage
+                best_extra[] = extra
+                empty!(best)
+                append!(best, selected)
             end
+            return nothing
         end
+
+        name, mask, candidate_extra = valid_candidates[index]
+        if count_ones(mask & ~coverage) > 0
+            push!(selected, name)
+            compatibility_check(selected) &&
+                search(index + 1, coverage | mask, extra + candidate_extra)
+            pop!(selected)
+        end
+        search(index + 1, coverage, extra)
+        return nothing
     end
+
+    search(1, UInt64(0), 0)
 
     covered_pkgs = String[]
     for i in 1:n
-        if (current_cov & (UInt64(1) << (i - 1))) != 0
+        if (best_cov[] & (UInt64(1) << (i - 1))) != 0
             push!(covered_pkgs, required_pkgs[i])
         end
     end
 
-    return selected, covered_pkgs
+    return best, covered_pkgs
 end
 
 # =============================================================================
@@ -395,76 +540,123 @@ Inspect candidate environments and verify that all shared direct and transitive
 dependencies in their Manifest.toml files have identical UUIDs, versions, and
 git-tree-sha1 hashes. Standard libraries (in Sys.STDLIB) are validated by UUID.
 """
-function check_manifest_compat(env_names::Vector{String})
+function normalize_manifest_entry(entry::AbstractDict, env_dir::String)
+    normalized = deepcopy(Dict{String,Any}(entry))
+    if haskey(normalized, "path") && !isabspath(normalized["path"])
+        normalized["path"] = normpath(joinpath(env_dir, normalized["path"]))
+    end
+    return normalized
+end
+
+function add_manifest_entry!(merged::Dict{String,Any}, package::String, entry::Dict{String,Any})
+    if !haskey(merged, package)
+        merged[package] = Any[entry]
+        return nothing
+    end
+    existing = merged[package]
+    entries = existing isa Vector ? existing : Any[existing]
+    existing_uuid = get(first(entries), "uuid", "")
+    entry_uuid = get(entry, "uuid", "")
+    existing_uuid == entry_uuid ||
+        error("ambiguous manifest name $package has UUIDs $existing_uuid and $entry_uuid")
+    merged[package] = entries
+    return nothing
+end
+
+function compatible_julia_version(manifest::AbstractDict)
+    raw = get(manifest, "julia_version", nothing)
+    format = string(get(manifest, "manifest_format", ""))
+    (raw === nothing || !startswith(format, "2")) && return false
+    try
+        version = VersionNumber(raw)
+        return version.major == VERSION.major && version.minor == VERSION.minor
+    catch
+        return false
+    end
+end
+
+function check_manifest_compat(
+    env_names::Vector{String}; require_current_julia::Bool=true
+)
+    isempty(env_names) && return false, Dict{String,Any}(), Dict{String,Any}()
     merged_deps = Dict{String,Any}()
     merged_manifest_deps = Dict{String,Any}()
+    entries_by_uuid = Dict{String,Dict{String,Any}}()
+    names_by_uuid = Dict{String,String}()
 
     for env_name in env_names
         env_dir = joinpath(DEPOT_PATH[1], "environments", env_name)
         proj_file = joinpath(env_dir, "Project.toml")
         mani_file = joinpath(env_dir, "Manifest.toml")
-
-        # Merge direct dependencies from Project.toml
-        if isfile(proj_file)
-            try
-                p_data = TOML.parsefile(proj_file)
-                for (k, v) in get(p_data, "deps", Dict{String,Any}())
-                    merged_deps[k] = v
-                end
-            catch e
-                @debug "QuickEnv: Failed to parse Project.toml" file=proj_file exception=e
-            end
-        end
-
-        # Check and merge Manifest.toml dependencies
-        if isfile(mani_file)
-            try
-                m_data = TOML.parsefile(mani_file)
-                deps = get(m_data, "deps", Dict{String,Any}())
-
-                for (pkg, val) in deps
-                    entries = isa(val, Vector) ? val : [val]
-                    for entry in entries
-                        uuid = get(entry, "uuid", "")
-
-                        if haskey(merged_manifest_deps, pkg)
-                            existing_val = merged_manifest_deps[pkg]
-                            existing_entries =
-                                isa(existing_val, Vector) ? existing_val : [existing_val]
-                            for existing in existing_entries
-                                existing_uuid = get(existing, "uuid", "")
-
-                                # UUID conflict
-                                if !isempty(uuid) &&
-                                    !isempty(existing_uuid) &&
-                                    uuid != existing_uuid
-                                    return false, Dict{String,Any}(), Dict{String,Any}()
-                                end
-
-                                # Version & hash check (skip for stdlibs without versions)
-                                v1 = get(entry, "version", "")
-                                v2 = get(existing, "version", "")
-                                s1 = get(entry, "git-tree-sha1", "")
-                                s2 = get(existing, "git-tree-sha1", "")
-
-                                if (!isempty(v1) && !isempty(v2) && v1 != v2) ||
-                                    (!isempty(s1) && !isempty(s2) && s1 != s2)
-                                    return false, Dict{String,Any}(), Dict{String,Any}()
-                                end
-                            end
-                        else
-                            merged_manifest_deps[pkg] = val
-                        end
-                    end
-                end
-            catch e
-                @debug "QuickEnv: Failed to parse Manifest.toml" file=mani_file exception=e
+        (!isfile(proj_file) || !isfile(mani_file)) &&
+            return false, Dict{String,Any}(), Dict{String,Any}()
+        try
+            project = TOML.parsefile(proj_file)
+            manifest = TOML.parsefile(mani_file)
+            (!require_current_julia || compatible_julia_version(manifest)) ||
                 return false, Dict{String,Any}(), Dict{String,Any}()
+            direct_deps = get(project, "deps", Dict{String,Any}())
+            manifest_deps = get(manifest, "deps", nothing)
+            manifest_deps isa AbstractDict ||
+                return false, Dict{String,Any}(), Dict{String,Any}()
+
+            source_uuids = Set{String}()
+            for (package, value) in manifest_deps
+                entries = value isa Vector ? value : Any[value]
+                for raw_entry in entries
+                    raw_entry isa AbstractDict ||
+                        return false, Dict{String,Any}(), Dict{String,Any}()
+                    entry = normalize_manifest_entry(raw_entry, env_dir)
+                    uuid = string(get(entry, "uuid", ""))
+                    isempty(uuid) && return false, Dict{String,Any}(), Dict{String,Any}()
+                    push!(source_uuids, uuid)
+                    if haskey(names_by_uuid, uuid) && names_by_uuid[uuid] != package
+                        return false, Dict{String,Any}(), Dict{String,Any}()
+                    end
+                    if haskey(entries_by_uuid, uuid) && entries_by_uuid[uuid] != entry
+                        return false, Dict{String,Any}(), Dict{String,Any}()
+                    end
+                    names_by_uuid[uuid] = String(package)
+                    entries_by_uuid[uuid] = entry
+                    add_manifest_entry!(merged_manifest_deps, String(package), entry)
+                end
             end
+
+            for (package, raw_uuid) in direct_deps
+                uuid = string(raw_uuid)
+                uuid in source_uuids ||
+                    return false, Dict{String,Any}(), Dict{String,Any}()
+                if haskey(merged_deps, package) && merged_deps[package] != raw_uuid
+                    return false, Dict{String,Any}(), Dict{String,Any}()
+                end
+                merged_deps[String(package)] = raw_uuid
+            end
+        catch e
+            @debug "QuickEnv: Invalid source environment" environment=env_name exception=e
+            return false, Dict{String,Any}(), Dict{String,Any}()
         end
     end
 
     return true, merged_deps, merged_manifest_deps
+end
+
+function manifest_compatibility_checker()
+    singleton_cache = Dict{String,Bool}()
+    pair_cache = Dict{Tuple{String,String},Bool}()
+    return function (env_names::Vector{String})
+        isempty(env_names) && return false
+        newest = last(env_names)
+        get!(singleton_cache, newest) do
+            first(check_manifest_compat([newest]))
+        end || return false
+        for previous in @view(env_names[1:(end - 1)])
+            key = previous <= newest ? (previous, newest) : (newest, previous)
+            get!(pair_cache, key) do
+                first(check_manifest_compat(collect(key)))
+            end || return false
+        end
+        return true
+    end
 end
 
 """
@@ -474,8 +666,8 @@ end
         is_silent::Bool
     ) -> Bool
 
-Fast-stitch compatible source environments into target_env in <5ms without Pkg SAT
-solving or precompilation overhead.
+Strictly validate and stitch compatible source environments into target_env without
+invoking Pkg's resolver. Julia may reuse compatible compile caches.
 """
 function stitch_environments(
     target_env::String, source_envs::Vector{String}, is_silent::Bool
@@ -483,44 +675,65 @@ function stitch_environments(
     compat, merged_deps, merged_manifest_deps = check_manifest_compat(source_envs)
     !compat && return false
 
-    target_dir = joinpath(DEPOT_PATH[1], "environments", target_env)
-    mkpath(target_dir)
+    env_root = joinpath(DEPOT_PATH[1], "environments")
+    target_dir = joinpath(env_root, target_env)
+    mkpath(env_root)
 
-    # Write Project.toml atomically
+    compat_bounds = Dict{String,String}()
+    for (package, value) in merged_manifest_deps
+        entries = value isa Vector ? value : Any[value]
+        direct_uuid = get(merged_deps, package, nothing)
+        direct_uuid === nothing && continue
+        entry = findfirst(item -> get(item, "uuid", nothing) == direct_uuid, entries)
+        entry === nothing && continue
+        version = get(entries[entry], "version", "")
+        !isempty(version) && (compat_bounds[package] = "=" * string(version))
+    end
+
+    # Prepare a complete project before installing the staging directory.
     proj_content = Dict(
         "name" => target_env,
         "description" =>
             "Autonomous compound environment combining @" * join(source_envs, ", @"),
+        "quickenv_sources" => source_envs,
         "deps" => merged_deps,
     )
-    p_file = joinpath(target_dir, "Project.toml")
-    p_tmp = p_file * ".tmp." * string(getpid())
-    try
-        open(p_tmp, "w") do io
-            return TOML.print(io, proj_content)
-        end
-        mv(p_tmp, p_file; force=true)
-    catch e
-        @debug "QuickEnv: Failed to write Project.toml" file=p_file exception=e
-        isfile(p_tmp) && rm(p_tmp; force=true)
-    end
-
-    # Write Manifest.toml atomically
+    !isempty(compat_bounds) && (proj_content["compat"] = compat_bounds)
     manifest_content = Dict(
         "julia_version" => string(VERSION),
         "manifest_format" => "2.0",
         "deps" => merged_manifest_deps,
     )
-    m_file = joinpath(target_dir, "Manifest.toml")
-    m_tmp = m_file * ".tmp." * string(getpid())
+
+    stage_dir = mktempdir(env_root; prefix=".$target_env.stage.")
+    chmod(stage_dir, 0o755)
     try
-        open(m_tmp, "w") do io
+        open(joinpath(stage_dir, "Project.toml"), "w") do io
+            return TOML.print(io, proj_content)
+        end
+        open(joinpath(stage_dir, "Manifest.toml"), "w") do io
             return TOML.print(io, manifest_content)
         end
-        mv(m_tmp, m_file; force=true)
+        lock_path = joinpath(env_root, ".$target_env.pid")
+        Pidfile.mkpidlock(lock_path; stale_age=10) do
+            if isdir(target_dir)
+                staged_project = joinpath(stage_dir, "Project.toml")
+                staged_manifest = joinpath(stage_dir, "Manifest.toml")
+                same_project = file_digest(staged_project) ==
+                    file_digest(joinpath(target_dir, "Project.toml"))
+                same_manifest = file_digest(staged_manifest) ==
+                    file_digest(joinpath(target_dir, "Manifest.toml"))
+                same_project && same_manifest ||
+                    error("auto-environment identity collision for @$target_env")
+            else
+                mv(stage_dir, target_dir)
+            end
+        end
     catch e
-        @debug "QuickEnv: Failed to write Manifest.toml" file=m_file exception=e
-        isfile(m_tmp) && rm(m_tmp; force=true)
+        @debug "QuickEnv: Failed to synthesize environment" environment=target_env exception=e
+        return false
+    finally
+        isdir(stage_dir) && rm(stage_dir; recursive=true, force=true)
     end
 
     if !is_silent
@@ -567,6 +780,7 @@ function get_known_local_packages()
     env_dir = joinpath(DEPOT_PATH[1], "environments")
     if isdir(env_dir)
         for entry in readdir(env_dir)
+            startswith(entry, ".") && continue
             toml_path = joinpath(env_dir, entry, "Project.toml")
             if isfile(toml_path)
                 try
@@ -596,6 +810,11 @@ function get_known_local_packages()
     end
 
     return known
+end
+
+function is_stdlib(package::String)
+    package in ("Base", "Core", "Main") && return true
+    return isfile(joinpath(Sys.STDLIB, package, "Project.toml"))
 end
 
 function diagnose_and_suggest_packages(imported_packages::Vector{String}, is_silent::Bool)
@@ -677,11 +896,11 @@ function diagnose_and_suggest_packages(imported_packages::Vector{String}, is_sil
                 if isempty(registry_pkgs)
                     try
                         pkg_mod = Base.require(Main, :Pkg)
-                        regs = Base.invokelatest(
-                            getproperty(
-                                getproperty(pkg_mod, :Registry), :reachable_registries
-                            ),
+                        registry = Base.invokelatest(getproperty, pkg_mod, :Registry)
+                        reachable = Base.invokelatest(
+                            getproperty, registry, :reachable_registries
                         )
+                        regs = Base.invokelatest(reachable)
                         for reg in regs
                             for (uuid, pkg_info) in reg.pkgs
                                 push!(registry_pkgs, pkg_info.name)
@@ -771,8 +990,7 @@ end
 # =============================================================================
 
 function activate_matched_env(matching::Vector{String}, is_verbose::Bool)
-    selected = something(findfirst(env -> !occursin(r"^v\d+\.\d+$", env), matching), 1)
-    env_name = matching[selected]
+    env_name = first(matching)
 
     current_project = Base.active_project()
     if current_project === nothing || basename(dirname(current_project)) != env_name
@@ -783,6 +1001,7 @@ function activate_matched_env(matching::Vector{String}, is_verbose::Bool)
         end
         activate_shared_env(env_name)
     end
+    isolate_load_path!()
 end
 
 function activate_fallback_env(fallback_env::String, script_path::String, is_verbose::Bool)
@@ -807,10 +1026,62 @@ function activate_fallback_env(fallback_env::String, script_path::String, is_ver
 end
 
 function lazy_pkg_add(packages::Vector{String}, is_silent::Bool)
+    isempty(packages) && return nothing
     pkg_mod = Base.require(Main, :Pkg)
+    add = Base.invokelatest(getproperty, pkg_mod, :add)
+    preserve_tiered = Base.invokelatest(getproperty, pkg_mod, :PRESERVE_TIERED)
     return Base.invokelatest(
-        getproperty(pkg_mod, :add), packages; io=is_silent ? devnull : stderr
+        add, packages;
+        io=is_silent ? devnull : stderr,
+        preserve=preserve_tiered,
     )
+end
+
+function auto_environment_name(required_packages::Vector{String}, source_envs=String[])
+    key = get_canonical_key(required_packages)
+    source_state = join((env * ":" * environment_digest(env) for env in source_envs), "+")
+    version_state = "$(VERSION.major).$(VERSION.minor)"
+    identity = bytes2hex(sha256(key * ":" * source_state * ":" * version_state))[1:24]
+    return "auto_" * identity
+end
+
+function ensure_empty_environment(env_name::String)
+    try
+        env_root = joinpath(DEPOT_PATH[1], "environments")
+        target_dir = joinpath(env_root, env_name)
+        mkpath(env_root)
+        lock_path = joinpath(env_root, ".$env_name.pid")
+        return Pidfile.mkpidlock(lock_path; stale_age=10) do
+            if isdir(target_dir)
+                return isfile(joinpath(target_dir, "Project.toml")) &&
+                    isfile(joinpath(target_dir, "Manifest.toml"))
+            end
+            stage_dir = mktempdir(env_root; prefix=".$env_name.stage.")
+            chmod(stage_dir, 0o755)
+            try
+                open(joinpath(stage_dir, "Project.toml"), "w") do io
+                    TOML.print(io, Dict("description" => "QuickEnv standard-library environment", "deps" => Dict()))
+                end
+                open(joinpath(stage_dir, "Manifest.toml"), "w") do io
+                    TOML.print(
+                        io,
+                        Dict(
+                            "julia_version" => string(VERSION),
+                            "manifest_format" => "2.0",
+                            "deps" => Dict(),
+                        ),
+                    )
+                end
+                mv(stage_dir, target_dir)
+                return true
+            finally
+                isdir(stage_dir) && rm(stage_dir; recursive=true, force=true)
+            end
+        end
+    catch e
+        @debug "QuickEnv: Could not create empty environment" environment=env_name exception=e
+        return false
+    end
 end
 
 function bootstrap_packages(
@@ -866,9 +1137,9 @@ end
 
 The main autonomous environment resolution pipeline:
 1. Local directory override: If is_local is true (# local), activates script_dir (--project=.).
-2. Fast-path: Check O(1) state-aware cache hit.
+2. Fast-path: Check the content-validated script and resolution caches.
 3. Single-environment matching: Search existing named environments.
-4. Bitmask Set-Cover & Fast Manifest Stitching: Combine compatible environments (<5ms).
+4. Bounded cover search and manifest stitching: combine compatible environments.
 5. Autonomous Creation / Fallback: Create dedicated @auto_<hash> environment in depot or fallback.
 """
 function handle_matching_or_fallback(
@@ -880,6 +1151,7 @@ function handle_matching_or_fallback(
     is_local::Bool,
     script_path::String,
 )
+    filter!(package -> !is_stdlib(package), required_packages)
     # -------------------------------------------------------------------------
     # 0. Local Directory Environment Override (# local)
     # -------------------------------------------------------------------------
@@ -895,8 +1167,19 @@ function handle_matching_or_fallback(
         return nothing
     end
 
+    if isempty(required_packages) && !isempty(fallback_env)
+        activate_shared_env(fallback_env)
+        return nothing
+    end
+
+    if isempty(required_packages)
+        empty_env = auto_environment_name(required_packages)
+        ensure_empty_environment(empty_env) && activate_shared_env(empty_env)
+        return nothing
+    end
+
     # -------------------------------------------------------------------------
-    # 1. Check O(1) State-Aware Cache Hit
+    # 1. Check Content-Validated Resolution Cache
     # -------------------------------------------------------------------------
     if isempty(fallback_env) && isempty(excluded_envs)
         cached_env = check_cache_hit(required_packages)
@@ -911,6 +1194,8 @@ function handle_matching_or_fallback(
     # -------------------------------------------------------------------------
     matching = find_matching_envs(required_packages)
     matching = filter_matching_envs(matching, fallback_env, excluded_envs)
+    filter!(env -> first(check_manifest_compat([env]; require_current_julia=false)), matching)
+    sort!(matching; by=env -> (direct_dependency_count(env), env))
 
     if !isempty(matching)
         activate_matched_env(matching, is_verbose)
@@ -922,7 +1207,7 @@ function handle_matching_or_fallback(
     end
 
     # -------------------------------------------------------------------------
-    # 3. Bitmask Greedy Set-Cover & Fast Manifest Stitching
+    # 3. Time-Bounded Cover Search & Manifest Stitching
     # -------------------------------------------------------------------------
     if isempty(fallback_env) && length(required_packages) >= 2
         # Gather all candidate named environments and their packages
@@ -930,6 +1215,7 @@ function handle_matching_or_fallback(
         env_dir = joinpath(DEPOT_PATH[1], "environments")
         if isdir(env_dir)
             for entry in readdir(env_dir)
+                startswith(entry, ".") && continue
                 occursin(r"^v\d+\.\d+$", entry) && continue # Skip global envs
                 entry in excluded_envs && continue
                 toml_path = joinpath(env_dir, entry, "Project.toml")
@@ -945,18 +1231,18 @@ function handle_matching_or_fallback(
             end
         end
 
-        covering_envs = find_minimal_covering_envs(required_packages, candidate_envs)
-        if !isempty(covering_envs) && length(covering_envs) > 1
-            # Check manifest compatibility
-            compat, _, _ = check_manifest_compat(covering_envs)
-            if compat
-                key = get_canonical_key(required_packages)
-                auto_env_name = "auto_" * get_cache_hash(key)
-                if stitch_environments(auto_env_name, covering_envs, is_silent)
-                    update_cache_entry(required_packages, auto_env_name, covering_envs)
-                    activate_matched_env([auto_env_name], is_verbose)
-                    return nothing
-                end
+        compatibility_check = manifest_compatibility_checker()
+        covering_envs = find_minimal_covering_envs(
+            required_packages,
+            candidate_envs;
+            compatibility_check=compatibility_check,
+        )
+        if !isempty(covering_envs)
+            auto_env_name = auto_environment_name(required_packages, covering_envs)
+            if stitch_environments(auto_env_name, covering_envs, is_silent)
+                update_cache_entry(required_packages, auto_env_name, covering_envs)
+                activate_matched_env([auto_env_name], is_verbose)
+                return nothing
             end
         end
 
@@ -964,16 +1250,23 @@ function handle_matching_or_fallback(
         # 3b. Optimization A: Partial Fast Stitch + Incremental Pkg.add
         # ---------------------------------------------------------------------
         partial_envs, covered_pkgs = find_partial_covering_envs(
-            required_packages, candidate_envs; strict_subset=true
+            required_packages,
+            candidate_envs;
+            strict_subset=true,
+            compatibility_check=compatibility_check,
         )
-        if !isempty(partial_envs) && !isempty(covered_pkgs) && length(covered_pkgs) < length(required_packages)
-            key = get_canonical_key(required_packages)
-            auto_env_name = "auto_" * get_cache_hash(key)
+        if !isempty(partial_envs) && !isempty(covered_pkgs)
+            auto_env_name = auto_environment_name(required_packages, partial_envs)
             if stitch_environments(auto_env_name, partial_envs, is_silent)
                 target_env_display = activate_fallback_env(auto_env_name, script_path, is_verbose)
-                bootstrap_packages(required_packages, target_env_display, is_silent)
-                update_cache_entry(required_packages, auto_env_name, [auto_env_name])
-                return nothing
+                try
+                    length(covered_pkgs) < length(required_packages) &&
+                        bootstrap_packages(required_packages, target_env_display, is_silent)
+                    update_cache_entry(required_packages, auto_env_name, [auto_env_name])
+                    return nothing
+                catch e
+                    @debug "QuickEnv: Partial environment completion failed; using clean fallback" exception=e
+                end
             end
         end
     end
@@ -983,8 +1276,7 @@ function handle_matching_or_fallback(
     # -------------------------------------------------------------------------
     target_env = fallback_env
     if isempty(target_env)
-        key = get_canonical_key(required_packages)
-        target_env = "auto_" * get_cache_hash(key)
+        target_env = auto_environment_name(required_packages)
     end
 
     target_env_display = activate_fallback_env(target_env, script_path, is_verbose)
@@ -1027,6 +1319,7 @@ function handle_forced_creation(
             end
             activate_shared_env(create_env)
         end
+        isolate_load_path!()
         return true
     end
 
@@ -1045,6 +1338,7 @@ function handle_forced_creation(
     end
 
     activate_shared_env(create_env)
+    isempty(missing_pkgs) && return true
     try
         lazy_pkg_add(missing_pkgs, is_silent)
     catch e
@@ -1058,26 +1352,42 @@ function handle_forced_creation(
 end
 
 function update_description(file_path::String, new_desc::String)
-    mkpath(dirname(file_path))
-    lines = isfile(file_path) ? readlines(file_path; keep=true) : String[]
-    description_replaced = false
-    escaped_desc = replace(new_desc, "\\" => "\\\\", "\"" => "\\\"")
+    try
+        mkpath(dirname(file_path))
+        lock_path = joinpath(dirname(file_path), ".$(basename(file_path)).pid")
+        return Pidfile.mkpidlock(lock_path; stale_age=10) do
+            lines = isfile(file_path) ? readlines(file_path; keep=true) : String[]
+            description_replaced = false
+            escaped_desc = replace(new_desc, "\\" => "\\\\", "\"" => "\\\"")
 
-    updated_lines = String[]
-    for line in lines
-        if occursin(r"^\s*description\s*=\s*\".*\"\s*$", line)
-            description_replaced = true
-            push!(updated_lines, "description = \"$escaped_desc\"\n")
-        else
-            push!(updated_lines, line)
+            updated_lines = String[]
+            for line in lines
+                if occursin(r"^\s*description\s*=\s*\".*\"\s*$", line)
+                    description_replaced = true
+                    push!(updated_lines, "description = \"$escaped_desc\"\n")
+                else
+                    push!(updated_lines, line)
+                end
+            end
+
+            if !description_replaced
+                pushfirst!(updated_lines, "description = \"$escaped_desc\"\n\n")
+            end
+
+            temp_path, io = mktemp(dirname(file_path))
+            try
+                write(io, join(updated_lines))
+                close(io)
+                mv(temp_path, file_path; force=true)
+            finally
+                isopen(io) && close(io)
+                isfile(temp_path) && rm(temp_path; force=true)
+            end
         end
+    catch e
+        @debug "QuickEnv: Could not update environment description" file=file_path exception=e
+        return nothing
     end
-
-    if !description_replaced
-        pushfirst!(updated_lines, "description = \"$escaped_desc\"\n\n")
-    end
-
-    return write(file_path, join(updated_lines))
 end
 
 function update_active_env_description(description::String)
@@ -1107,24 +1417,143 @@ function warn_ignored_local_files(script_path::String, env_name::String, is_sile
     return nothing
 end
 
-function extract_packages_from_line(line::String)
-    packages = String[]
-    clean_line = strip(first(split(line, '#')))
-    m = match(r"^\s*(using|import)\s+(.*)$", clean_line)
-    m === nothing && return packages
-
-    raw_imports = m.captures[2]
-    pkg_part = first(split(raw_imports, ':'))
-    parts = split(pkg_part, ',')
-    for part in parts
-        pkg = strip(part)
-        if !isempty(pkg) && !startswith(pkg, '.')
-            raw_pkg = first(split(pkg))
-            pkg_name = first(split(raw_pkg, '.'))
-            !isempty(pkg_name) && push!(packages, String(pkg_name))
-        end
+function import_root(node)
+    if node isa Symbol
+        name = String(node)
+        return startswith(name, ".") ? "" : name
     end
-    return packages
+    node isa Expr || return ""
+    node.head == :as && return isempty(node.args) ? "" : import_root(first(node.args))
+    if node.head == :colon || node.head == :(:)
+        return isempty(node.args) ? "" : import_root(first(node.args))
+    end
+    node.head == :. || return ""
+    isempty(node.args) && return ""
+    first_arg = first(node.args)
+    first_arg == :. && return ""
+    return import_root(first_arg)
+end
+
+function collect_syntax_metadata!(packages::Vector{String}, includes::Vector{String}, node)
+    node isa Expr || return nothing
+    node.head in (:quote, :inert) && return nothing
+    if node.head in (:using, :import)
+        for arg in node.args
+            package = import_root(arg)
+            !isempty(package) && package ∉ packages &&
+                push!(packages, package)
+        end
+        return nothing
+    end
+    if node.head == :call && length(node.args) == 2 && node.args[1] == :include &&
+       node.args[2] isa String
+        push!(includes, node.args[2])
+        return nothing
+    end
+    for arg in node.args
+        collect_syntax_metadata!(packages, includes, arg)
+    end
+    return nothing
+end
+
+function parse_source_syntax(source::String)
+    packages = String[]
+    includes = String[]
+    try
+        collect_syntax_metadata!(packages, includes, Meta.parseall(source))
+    catch e
+        @debug "QuickEnv: Julia syntax parsing failed" exception=e
+    end
+    return packages, includes
+end
+
+function lex_source_lines(source::String)
+    lines = Tuple{String,String}[]
+    code = IOBuffer()
+    comment = IOBuffer()
+    state = :code
+    block_depth = 0
+    escaped = false
+    previous_significant = '\0'
+    chars = collect(source)
+    i = 1
+    while i <= length(chars)
+        char = chars[i]
+        next_char = i < length(chars) ? chars[i + 1] : '\0'
+        third_char = i + 1 < length(chars) ? chars[i + 2] : '\0'
+        if char == '\n'
+            push!(lines, (String(take!(code)), String(take!(comment))))
+            state == :line_comment && (state = :code)
+            escaped = false
+            previous_significant = '\0'
+            i += 1
+            continue
+        end
+        if state == :line_comment
+            print(comment, char)
+        elseif state == :block_comment
+            if char == '#' && next_char == '='
+                block_depth += 1
+                i += 1
+            elseif char == '=' && next_char == '#'
+                block_depth -= 1
+                i += 1
+                block_depth == 0 && (state = :code)
+            end
+        elseif state in (:string, :char, :command)
+            print(code, char)
+            delimiter = state == :string ? '"' : state == :char ? '\'' : '`'
+            if char == delimiter && !escaped
+                state = :code
+            end
+            escaped = char == '\\' && !escaped
+            char != '\\' && (escaped = false)
+        elseif state == :triple_string
+            print(code, char)
+            if char == '"' && next_char == '"' && third_char == '"'
+                print(code, "\"\"")
+                i += 2
+                state = :code
+            end
+        elseif char == '#' && next_char == '='
+            state = :block_comment
+            block_depth = 1
+            i += 1
+        elseif char == '#'
+            state = :line_comment
+        elseif char == '"' && next_char == '"' && third_char == '"'
+            print(code, "\"\"\"")
+            i += 2
+            state = :triple_string
+        elseif char == '"'
+            print(code, char)
+            state = :string
+        elseif char == '\''
+            print(code, char)
+            if !(isletter(previous_significant) || isnumeric(previous_significant) ||
+                 previous_significant in (')', ']', '}', '\''))
+                state = :char
+            end
+        elseif char == '`'
+            print(code, char)
+            state = :command
+        else
+            print(code, char)
+        end
+        state == :code && !isspace(char) && (previous_significant = char)
+        i += 1
+    end
+    if position(code) > 0 || position(comment) > 0
+        push!(lines, (String(take!(code)), String(take!(comment))))
+    end
+    return lines
+end
+
+function extract_packages_from_line(line::String)
+    lines = lex_source_lines(line)
+    isempty(lines) && return String[]
+    parsed, _ = parse_source_syntax(first(lines)[1])
+    return parsed
 end
 
 function parse_inline_options(line::String)
@@ -1300,12 +1729,26 @@ function parse_standalone_comments(line::String)
 end
 
 function extract_included_file(line::String, current_dir::String)
-    clean_line = strip(first(split(line, '#')))
-    m = match(r"\binclude\s*\(\s*[\"\']([^\"\']+)[\"\']\s*\)", clean_line)
-    m === nothing && return ""
-    inc_target = m.captures[1]
+    lines = lex_source_lines(line)
+    isempty(lines) && return ""
+    _, includes = parse_source_syntax(first(lines)[1])
+    isempty(includes) && return ""
+    inc_target = first(includes)
     inc_path = isabspath(inc_target) ? inc_target : joinpath(current_dir, inc_target)
     return isfile(inc_path) ? abspath(inc_path) : ""
+end
+
+function discover_script_files!(files::Vector{String}, script_path::String, visited::Set{String})
+    script_path in visited && return files
+    !isfile(script_path) && return files
+    push!(visited, script_path)
+    push!(files, script_path)
+    _, includes = parse_source_syntax(read(script_path, String))
+    for target in includes
+        included = isabspath(target) ? target : joinpath(dirname(script_path), target)
+        isfile(included) && discover_script_files!(files, abspath(included), visited)
+    end
+    return files
 end
 
 function parse_script_metadata(script_path::String; visited=Set{String}())
@@ -1326,9 +1769,17 @@ function parse_script_metadata(script_path::String; visited=Set{String}())
     push!(visited, script_path)
     current_dir = dirname(script_path)
 
-    for line in eachline(script_path)
+    source = read(script_path, String)
+    syntax_packages, syntax_includes = parse_source_syntax(source)
+    append!(packages, syntax_packages)
+
+    for (code, comment) in lex_source_lines(source)
+        line_packages, _ = parse_source_syntax(code)
+        has_quickenv_import = "QuickEnv" in line_packages
+        directive_line = isempty(comment) || !has_quickenv_import ? "" :
+            code * " #" * comment
         inline_fallback, inline_excl, inline_verbose, inline_silent, inline_create, inline_desc, inline_local = parse_inline_options(
-            line
+            directive_line
         )
         !isempty(inline_fallback) && (fallback_env = inline_fallback)
         !isempty(inline_excl) && append!(excluded_envs, inline_excl)
@@ -1338,8 +1789,9 @@ function parse_script_metadata(script_path::String; visited=Set{String}())
         !isempty(inline_create) && (create_env = inline_create)
         !isempty(inline_desc) && (description = inline_desc)
 
+        standalone_comment = isempty(strip(code)) && !isempty(comment) ? "#" * comment : ""
         sa_fallback, sa_excl, sa_verbose, sa_silent, sa_create, sa_desc, sa_local = parse_standalone_comments(
-            line
+            standalone_comment
         )
         !isempty(sa_fallback) && (fallback_env = sa_fallback)
         !isempty(sa_excl) && append!(excluded_envs, sa_excl)
@@ -1349,11 +1801,11 @@ function parse_script_metadata(script_path::String; visited=Set{String}())
         !isempty(sa_create) && (create_env = sa_create)
         !isempty(sa_desc) && (description = sa_desc)
 
-        for pkg in extract_packages_from_line(line)
-            !(pkg in packages) && push!(packages, pkg)
-        end
+    end
 
-        inc_file = extract_included_file(line, current_dir)
+    for target in syntax_includes
+        inc_path = isabspath(target) ? target : joinpath(current_dir, target)
+        inc_file = isfile(inc_path) ? abspath(inc_path) : ""
         if !isempty(inc_file) && !(inc_file in visited)
             push!(included_files, inc_file)
         end
@@ -1389,6 +1841,7 @@ function find_matching_envs(required_pkgs::Vector{String})
 
     matching_envs = String[]
     for entry in readdir(env_dir)
+        startswith(entry, ".") && continue
         path = joinpath(env_dir, entry)
         !isdir(path) && continue
         toml_path = joinpath(path, "Project.toml")
@@ -1407,11 +1860,20 @@ function find_matching_envs(required_pkgs::Vector{String})
     return sort(matching_envs)
 end
 
+function direct_dependency_count(env_name::String)
+    project = joinpath(DEPOT_PATH[1], "environments", env_name, "Project.toml")
+    try
+        return length(get(TOML.parsefile(project), "deps", Dict{String,Any}()))
+    catch
+        return typemax(Int)
+    end
+end
+
 function filter_matching_envs(
     matching::Vector{String}, fallback_env::String, excluded_envs::Vector{String}
 )
     return filter(matching) do env
-        if ("global" in excluded_envs) && occursin(r"^v\d+\.\d+$", env)
+        if occursin(r"^v\d+\.\d+$", env)
             return false
         end
         if env in excluded_envs
@@ -1425,24 +1887,27 @@ function filter_matching_envs(
 end
 
 function __init__()
+    lowercase(get(ENV, "QUICKENV_DISABLE_AUTO", "false")) == "true" && return nothing
     script_path = get_script_path()
     isempty(script_path) && return nothing
 
     # Register automatic failure-invalidation exit hook:
     # If the script fails during runtime (e.g. unhandled exception),
     # invalidate its cached entry immediately.
-    atexit(
-        function ()
-            if isdefined(Base, :current_exceptions) && !isempty(Base.current_exceptions())
+    atexit() do exit_code
+        if exit_code != 0
+            try
                 invalidate_script_cache(script_path)
+            catch e
+                @debug "QuickEnv: Could not invalidate script cache during shutdown" exception=e
             end
         end
-    )
+    end
 
     env_verbose = get(ENV, "QUICKENV_VERBOSE", "false")
     env_silent = get(ENV, "QUICKENV_SILENT", "false")
 
-    # Fast 1-step script-level cache hit (mtime + path verification)
+    # Fast script-level cache hit with content and environment verification
     cached_script_env = check_script_cache_hit(script_path)
     if cached_script_env !== nothing
         is_verbose = (lowercase(env_verbose) == "true")
@@ -1459,7 +1924,7 @@ function __init__()
         script_path
     )
 
-    filter!(p -> (p != "QuickEnv"), required_packages)
+    filter!(p -> p != "QuickEnv" && !is_stdlib(p), required_packages)
 
     is_verbose = (lowercase(env_verbose) == "true") || script_verbose
     is_silent = (lowercase(env_silent) == "true") || script_silent

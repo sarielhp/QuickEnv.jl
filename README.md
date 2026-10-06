@@ -6,7 +6,7 @@
 
 `QuickEnv.jl` provides a **set-and-forget environment setup** for standalone Julia scripts.
 
-The overhead is minimal, both in **[runtime](docs/tradeoffs.md#1-startup-performance-on-cached-runs-second-run)** (~47 ms on cached runs) and **[disk space](docs/DESIGN.md#8-the-economics-of-julia-environments-why-having-100-environments-costs-almost-nothing)** (~3 KB per environment).
+The overhead is small for typical scripts; see the measured [runtime tradeoffs](docs/tradeoffs.md#1-startup-performance-on-cached-runs-second-run). Environments reuse Julia's content-addressed package and artifact stores, although manifest size varies with the dependency graph.
 
 After installing `QuickEnv` once in your global environment (`@v1.x`), simply add `using QuickEnv` to the top of any standalone script. QuickEnv automatically inspects your imports, discovers or fast-stitches a matching shared environment, installs any missing packages into isolated environments, and activates the project before your code runs—**without ever modifying your global environment**.
 
@@ -37,7 +37,7 @@ using Plots, DataFrames
 When you execute `julia your_script.jl` or `./your_script.jl`:
 - QuickEnv parses the script's imports (`using Plots, DataFrames`).
 - If an existing [named environment](#shared-named-environments-in-julia) satisfies the imports (e.g., `@plotting_data`), QuickEnv activates it immediately.
-- If multiple environments together cover the imports (e.g., `@plotting` + `@data`), QuickEnv fast-stitches them into a combined `@auto_<hash>` environment in `<5ms` with zero recompilation.
+- If multiple compatible environments together cover the imports (e.g., `@plotting` + `@data`), QuickEnv can stitch them into a combined `@auto_<hash>` environment without invoking the package resolver. Existing compile caches are reused when Julia considers them valid.
 - If new packages are required, QuickEnv pre-stitches the known base packages and installs the missing packages via `Pkg.add` into a dedicated `@auto_<hash>` environment.
 - **Your global environment (`@v1.x`) remains untouched.** Subsequent runs hit the cache for near-zero startup overhead.
 
@@ -54,7 +54,7 @@ Julia package environments typically follow one of three approaches:
 **QuickEnv provides the advantages of all three:**
 - **Pristine Global Environment**: Strictly protects `@v1.x` from package contamination.
 - **Autonomous Named Selection**: Automatically finds or synthesizes the right named environment in `~/.julia/environments/`.
-- **Fast Compound Stitching**: Combines compatible environments in `<5ms` without running Pkg's SAT solver or recompiling packages.
+- **Fast Compound Stitching**: Combines compatible environments without running Pkg's resolver. Julia may still compile if a cache is absent, evicted, or incompatible with the current runtime flags.
 - **Local Project Mode**: Supports `# local` whenever you want the local directory activated as `--project=.`.
 
 ---
@@ -71,7 +71,7 @@ Common directives include:
 - `# fallback: <env>` — Target a specific named environment if no match exists.
 - `# create: <env>` — Force QuickEnv to use and manage a specific named environment.
 - `# local` — Activate the script's local directory as `--project=.`.
-- `# exclude: global` — Avoid matching the global environment (`@v1.x`).
+- `# exclude: <env>` — Avoid specific named environments. Versioned global environments (`@v1.x`) are always skipped.
 - `# silent` / `# verbose` — Configure output logging levels.
 
 > For the complete reference of all available magic comments and standalone directives (`# desc:`, multiline formats, environment variables), see the **[Configuration Guide](docs/README.md#optional-configuration-magic-comments-reference)**.
@@ -101,8 +101,8 @@ savefig(p, "analysis.pdf")
 using QuickEnv
 using Plots
 
-# Immediate launch (<1ms): QuickEnv detects that Plots is already satisfied
-# by the environment created in Step 1—zero download, zero solve, zero recompilation.
+# QuickEnv detects that Plots is already satisfied by the environment created
+# in Step 1, avoiding a download and dependency solve.
 p = plot(1:100, rand(100), title="Quick Plot")
 savefig(p, "quick.pdf")
 ```
@@ -114,12 +114,14 @@ savefig(p, "quick.pdf")
 ## Technical Architecture
 
 QuickEnv resolves environments through an autonomous multi-stage pipeline:
-1. **O(1) Fast Script-Level Cache**: Checks file modification times (`mtime`) against `~/.julia/quickenv/cache.toml` to reuse known environments in `<0.5ms`.
-2. **Bitmask Set-Cover Solver**: Maps dependency sets to hardware bitmasks (`UInt64`) to find the minimal combination of existing named environments.
-3. **Manifest Fast-Stitching (<5ms)**: Verifies transitive dependency compatibility and synthesizes compound `@auto_<hash>` environments on disk without running Pkg's SAT solver or recompiling packages.
-4. **Partial Stitching & Incremental Bootstrap**: When new packages are requested, pre-stitches the known base manifest and runs `Pkg.add` only on the missing packages, avoiding recompilation cascades.
+1. **Content-Validated Script Cache**: Hashes the entry script and statically included files, and validates the target and source environments before reuse.
+2. **Bounded Bitmask Cover Solver**: Uses branch-and-bound over `UInt64` coverage masks to minimize environment count and then extraneous direct dependencies, subject to a strict time budget.
+3. **Manifest Fast-Stitching**: Strictly compares complete manifest entries by UUID and synthesizes a compound `@auto_<hash>` environment without invoking Pkg's resolver.
+4. **Partial Stitching & Incremental Bootstrap**: When new packages are requested, pre-stitches the known base manifest and asks `Pkg.add` to add only the missing packages. Pkg may still adjust compatible versions or precompile when necessary.
 
 > For an in-depth explanation of fast stitching vs. runtime stacking (`LOAD_PATH`), bitmask scoring math, and caching internals, see **[docs/DESIGN.md](docs/DESIGN.md)**.
+
+QuickEnv preserves existing `LOAD_PATH` entries by default, which allows included helpers to import QuickEnv again. For stricter isolation from Julia's versioned global environment, set `QUICKENV_ISOLATE_LOAD_PATH=true`; explicit custom load paths remain available.
 
 ---
 

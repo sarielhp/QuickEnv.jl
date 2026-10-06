@@ -1,6 +1,11 @@
+ENV["QUICKENV_DISABLE_AUTO"] = "true"
 using QuickEnv
 using Test
 using Pkg
+using TOML
+
+const QUICKENV_TEST_DEPOT = mktempdir()
+pushfirst!(DEPOT_PATH, QUICKENV_TEST_DEPOT)
 
 @testset "QuickEnv.jl Tests" begin
     @testset "Script Metadata Parsing" begin
@@ -76,6 +81,30 @@ using Pkg
             @test !("DataFrames.DataFrame" in pkgs_sub)
         finally
             rm(tmp_path_sub, force=true)
+        end
+
+        # Imports and directives inside string literals are data, not source code.
+        mock_script_string = """
+        using QuickEnv # silent
+        fixture = \"\"\"
+        using FakePackage
+        using QuickEnv # create: must_not_exist, desc: dangerous
+        \"\"\"
+        using
+            Dates
+        """
+        tmp_path_string, io_string = mktemp()
+        try
+            write(io_string, mock_script_string)
+            close(io_string)
+            string_pkgs, _, _, _, silent_string, create_string, desc_string, _ =
+                QuickEnv.parse_script_metadata(tmp_path_string)
+            @test string_pkgs == ["QuickEnv", "Dates"]
+            @test silent_string
+            @test isempty(create_string)
+            @test isempty(desc_string)
+        finally
+            rm(tmp_path_string, force=true)
         end
 
         # Test Inline verbose parsing
@@ -269,9 +298,9 @@ using Pkg
     @testset "Environment Filtering Logic (Magic Comments)" begin
         mock_matching = ["v1.12", "plotting", "data", "broken_env"]
 
-        # 1. Standard Case: No fallback, no exclusions
+        # 1. Global environments are never automatic matches.
         res1 = QuickEnv.filter_matching_envs(copy(mock_matching), "", String[])
-        @test res1 == ["v1.12", "plotting", "data", "broken_env"]
+        @test res1 == ["plotting", "data", "broken_env"]
 
         # 2. Fallback Override: Fallback name specified forces standard global (v1.12) to be ignored
         res2 = QuickEnv.filter_matching_envs(copy(mock_matching), "plotting", String[])
@@ -288,7 +317,7 @@ using Pkg
         res4 = QuickEnv.filter_matching_envs(
             copy(mock_matching), "", ["broken_env", "plotting"]
         )
-        @test "v1.12" in res4
+        @test !("v1.12" in res4)
         @test "data" in res4
         @test !("broken_env" in res4)
         @test !("plotting" in res4)
@@ -400,13 +429,28 @@ using Pkg
             ),
         ]
 
-        # Should select the clean modular combination over the bloated mega environment
+        # Exact objective: fewest environments first, then fewest extraneous packages.
         selected = QuickEnv.find_minimal_covering_envs(req, candidates)
-        @test "plotting" in selected
-        @test "data" in selected
-        @test "utils" in selected
+        @test selected == ["mega"]
         @test !("unrelated" in selected)
-        @test length(selected) == 3
+        @test length(selected) == 1
+
+        # A classic greedy counterexample still returns the exact two-set cover.
+        exact_req = ["1", "2", "3", "4", "5", "6"]
+        exact_candidates = [
+            ("greedy_trap", ["1", "2", "3", "4"]),
+            ("left", ["1", "2", "5"]),
+            ("right", ["3", "4", "6"]),
+        ]
+        @test Set(QuickEnv.find_minimal_covering_envs(exact_req, exact_candidates)) ==
+            Set(["left", "right"])
+
+        compatible = QuickEnv.find_minimal_covering_envs(
+            ["A", "B"],
+            [("bad_a", ["A"]), ("bad_b", ["B"]), ("good_a", ["A"]), ("good_b", ["B"])];
+            compatibility_check=envs -> !any(startswith(env, "bad") for env in envs),
+        )
+        @test Set(compatible) == Set(["good_a", "good_b"])
 
         # Test timeout guard (timeout_sec = 0.0 forces immediate timeout return)
         timeout_selected = QuickEnv.find_minimal_covering_envs(
@@ -470,11 +514,14 @@ Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
             write(
                 joinpath(env_plot, "Manifest.toml"),
                 """
+julia_version = "$(VERSION)"
+manifest_format = "2.0"
+
 [deps]
-[deps.Plots]
+[[deps.Plots]]
 uuid = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 version = "1.40.0"
-git-tree-sha1 = "abc12345"
+git-tree-sha1 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 """,
             )
 
@@ -488,11 +535,14 @@ DataFrames = "a93c0a0b-4844-5373-a966-813e8a4b615c"
             write(
                 joinpath(env_data, "Manifest.toml"),
                 """
+julia_version = "$(VERSION)"
+manifest_format = "2.0"
+
 [deps]
-[deps.DataFrames]
+[[deps.DataFrames]]
 uuid = "a93c0a0b-4844-5373-a966-813e8a4b615c"
 version = "1.6.0"
-git-tree-sha1 = "def67890"
+git-tree-sha1 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 """,
             )
 
@@ -515,6 +565,18 @@ git-tree-sha1 = "def67890"
                     DEPOT_PATH[1], "environments", target_env, "Project.toml"
                 )
                 @test isfile(target_proj)
+                target_manifest = joinpath(dirname(target_proj), "Manifest.toml")
+                parsed_manifest = TOML.parsefile(target_manifest)
+                @test parsed_manifest["deps"]["Plots"] isa Vector
+                @test parsed_manifest["deps"]["DataFrames"] isa Vector
+                @test Pkg.Types.EnvCache(target_proj) isa Pkg.Types.EnvCache
+
+                # Existing auto environments are immutable; differing content is
+                # treated as an identity collision rather than overwritten.
+                write(target_proj, "[deps]\n")
+                @test !QuickEnv.stitch_environments(
+                    target_env, ["mock_plot", "mock_data"], true
+                )
             finally
                 empty!(DEPOT_PATH)
                 append!(DEPOT_PATH, old_depot)
@@ -547,8 +609,11 @@ Foo = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
             write(
                 joinpath(env_a, "Manifest.toml"),
                 """
+julia_version = "$(VERSION)"
+manifest_format = "2.0"
+
 [deps]
-[deps.Foo]
+[[deps.Foo]]
 uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 version = "1.0.0"
 """,
@@ -564,8 +629,11 @@ Foo = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
             write(
                 joinpath(env_b, "Manifest.toml"),
                 """
+julia_version = "$(VERSION)"
+manifest_format = "2.0"
+
 [deps]
-[deps.Foo]
+[[deps.Foo]]
 uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 version = "2.0.0"
 """,
@@ -589,8 +657,20 @@ version = "2.0.0"
     end
 
     @testset "State-Aware Cache Engine" begin
+        function write_cache_fixture(env_name)
+            env_dir = joinpath(DEPOT_PATH[1], "environments", env_name)
+            mkpath(env_dir)
+            write(joinpath(env_dir, "Project.toml"), "[deps]\n")
+            write(
+                joinpath(env_dir, "Manifest.toml"),
+                "julia_version = \"$(VERSION)\"\nmanifest_format = \"2.0\"\n[deps]\n",
+            )
+            return env_dir
+        end
+
         # 1. Update cache entry
         req = ["Plots", "DataFrames"]
+        source_dir = write_cache_fixture("plotting")
         QuickEnv.update_cache_entry(req, "test_cache_target", ["plotting"])
 
         # 2. Check cache hit
@@ -599,13 +679,14 @@ version = "2.0.0"
         @test hit === nothing
 
         # Create target dir and test hit
-        target_dir = joinpath(DEPOT_PATH[1], "environments", "test_cache_target")
-        mkpath(target_dir)
+        target_dir = write_cache_fixture("test_cache_target")
         try
+            QuickEnv.update_cache_entry(req, "test_cache_target", ["plotting"])
             hit2 = QuickEnv.check_cache_hit(req)
             @test hit2 == "test_cache_target"
         finally
             rm(target_dir, recursive=true, force=true)
+            rm(source_dir, recursive=true, force=true)
         end
 
         # 3. Corrupted cache entry with mismatched sources / mtimes
@@ -617,7 +698,8 @@ version = "2.0.0"
             cache[bad_key] = Dict(
                 "env" => "test_corrupt_cache",
                 "sources" => ["env1", "env2"],
-                "mtimes" => [1.0],
+                "source_digests" => ["bad"],
+                "target_digest" => "bad",
                 "updated_at" => string(time()),
             )
             QuickEnv.save_cache(cache)
@@ -640,7 +722,10 @@ version = "2.0.0"
             @test haskey(c_data, "scripts")
             @test haskey(c_data["scripts"], mock_script_path)
             @test c_data["scripts"][mock_script_path]["env"] == "auto_script_test"
-            @test c_data["scripts"][mock_script_path]["mtime"] == mtime(mock_script_path)
+            @test c_data["scripts"][mock_script_path]["files"] == [mock_script_path]
+            @test length(c_data["scripts"][mock_script_path]["digests"]) == 1
+
+            @test QuickEnv.check_script_cache_hit(mock_script_path) === nothing
 
             # Invalidate
             QuickEnv.invalidate_script_cache(mock_script_path)
@@ -648,6 +733,24 @@ version = "2.0.0"
             @test !haskey(get(c_data_after, "scripts", Dict()), mock_script_path)
         finally
             rm(mock_script_path, force=true)
+        end
+
+
+        # Included files participate in script-cache identity.
+        include_dir = mktempdir()
+        include_target = write_cache_fixture("auto_script_include_test")
+        main_script = joinpath(include_dir, "main.jl")
+        helper_script = joinpath(include_dir, "helper.jl")
+        write(main_script, "using QuickEnv\ninclude(\"helper.jl\")\n")
+        write(helper_script, "using Dates\n")
+        try
+            QuickEnv.update_script_cache_entry(main_script, "auto_script_include_test")
+            @test QuickEnv.check_script_cache_hit(main_script) == "auto_script_include_test"
+            write(helper_script, "using Dates, Random\n")
+            @test QuickEnv.check_script_cache_hit(main_script) === nothing
+        finally
+            rm(include_dir; recursive=true, force=true)
+            rm(include_target; recursive=true, force=true)
         end
     end
 
@@ -735,5 +838,202 @@ version = "2.0.0"
         )
         @test occursin("data", mock_project_path) == true
         @test basename(dirname(mock_project_path)) != "data"
+    end
+
+    @testset "Adversarial Parser Regressions" begin
+        alias_script, io = mktemp()
+        try
+            write(io, "import DataFrames as DF\nusing CSV\nusing JSON: thing as J\nx = 1 # local\n")
+            close(io)
+            packages, _, _, _, _, _, _, is_local =
+                QuickEnv.parse_script_metadata(alias_script)
+            @test packages == ["DataFrames", "CSV", "JSON"]
+            @test !is_local
+        finally
+            isopen(io) && close(io)
+            rm(alias_script; force=true)
+        end
+        @test QuickEnv.extract_packages_from_line("") == String[]
+        @test QuickEnv.extract_included_file("", pwd()) == ""
+    end
+
+    @testset "Cover Boundary Regressions" begin
+        required64 = ["P$i" for i in 1:64]
+        @test QuickEnv.find_minimal_covering_envs(
+            required64, [("all", copy(required64))]
+        ) == ["all"]
+        @test isempty(QuickEnv.find_minimal_covering_envs(
+            ["P$i" for i in 1:65], [("all", ["P$i" for i in 1:65])]
+        ))
+    end
+
+    @testset "Malformed Cache Entries Fail Closed" begin
+        cache = QuickEnv.load_cache()
+        cache[QuickEnv.get_canonical_key(["MalformedCachePackage"])] = "not a table"
+        malformed_script, malformed_io = mktemp()
+        try
+            close(malformed_io)
+            cache["scripts"] = Dict(malformed_script => 17)
+            QuickEnv.save_cache(cache)
+            @test QuickEnv.check_cache_hit(["MalformedCachePackage"]) === nothing
+            @test QuickEnv.check_script_cache_hit(malformed_script) === nothing
+        finally
+            isopen(malformed_io) && close(malformed_io)
+            rm(malformed_script; force=true)
+        end
+    end
+
+    @testset "Subprocess Activation Resilience" begin
+        project_root = dirname(@__DIR__)
+        separator = Sys.iswindows() ? ';' : ':'
+        explicit_load_path = string(project_root, separator, "@stdlib")
+
+        repeated_dir = mktempdir()
+        try
+            repeated_depot = joinpath(repeated_dir, "depot")
+            mkpath(repeated_depot)
+            write(joinpath(repeated_dir, "helper.jl"), "using QuickEnv\n")
+            repeated_script = joinpath(repeated_dir, "main.jl")
+            write(repeated_script, "using QuickEnv\ninclude(\"helper.jl\")\n")
+            command = `$(Base.julia_cmd()) --startup-file=no --compiled-modules=no $repeated_script`
+            process = run(
+                setenv(
+                    command,
+                    "JULIA_DEPOT_PATH" => repeated_depot,
+                    "JULIA_LOAD_PATH" => explicit_load_path,
+                );
+                wait=false,
+            )
+            @test success(process)
+
+            isolated_process = run(
+                setenv(
+                    command,
+                    "JULIA_DEPOT_PATH" => repeated_depot,
+                    "JULIA_LOAD_PATH" => explicit_load_path,
+                    "QUICKENV_ISOLATE_LOAD_PATH" => "true",
+                );
+                wait=false,
+            )
+            @test success(isolated_process)
+
+            include_script = joinpath(repeated_dir, "included-main.jl")
+            write(
+                include_script,
+                "using QuickEnv\nusing Dates\n" *
+                "@assert startswith(basename(dirname(Base.active_project())), \"auto_\")\n",
+            )
+            include_command = `$(Base.julia_cmd()) --startup-file=no --compiled-modules=no -e 'include(ARGS[1])' $include_script`
+            include_process = run(
+                setenv(
+                    include_command,
+                    "JULIA_DEPOT_PATH" => repeated_depot,
+                    "JULIA_LOAD_PATH" => explicit_load_path,
+                );
+                wait=false,
+            )
+            @test success(include_process)
+
+            eval_command = `$(Base.julia_cmd()) --startup-file=no --compiled-modules=no -e 'before = Base.active_project(); using QuickEnv; @assert Base.active_project() == before'`
+            eval_process = run(
+                setenv(
+                    eval_command,
+                    "JULIA_DEPOT_PATH" => repeated_depot,
+                    "JULIA_LOAD_PATH" => explicit_load_path,
+                );
+                wait=false,
+            )
+            @test success(eval_process)
+        finally
+            rm(repeated_dir; recursive=true, force=true)
+        end
+
+        if !Sys.iswindows()
+            readonly_dir = mktempdir()
+            readonly_depot = joinpath(readonly_dir, "depot")
+            mkpath(readonly_depot)
+            readonly_env = joinpath(readonly_depot, "environments", "readonly_target")
+            mkpath(readonly_env)
+            write(joinpath(readonly_env, "Project.toml"), "[deps]\n")
+            write(
+                joinpath(readonly_env, "Manifest.toml"),
+                "julia_version = \"$(VERSION)\"\nmanifest_format = \"2.0\"\n[deps]\n",
+            )
+            readonly_script = joinpath(readonly_dir, "main.jl")
+            write(
+                readonly_script,
+                "using QuickEnv # fallback: readonly_target, desc: read-only test\nusing Dates\n",
+            )
+            chmod(joinpath(readonly_env, "Project.toml"), 0o444)
+            chmod(joinpath(readonly_env, "Manifest.toml"), 0o444)
+            chmod(readonly_env, 0o555)
+            chmod(dirname(readonly_env), 0o555)
+            chmod(readonly_depot, 0o555)
+            try
+                depot_path = string(readonly_depot, separator, join(DEPOT_PATH, separator))
+                command = `$(Base.julia_cmd()) --startup-file=no --compiled-modules=no $readonly_script`
+                process = run(
+                    setenv(
+                        command,
+                        "JULIA_DEPOT_PATH" => depot_path,
+                        "JULIA_LOAD_PATH" => explicit_load_path,
+                    );
+                    wait=false,
+                )
+                @test success(process)
+            finally
+                chmod(readonly_depot, 0o755)
+                chmod(dirname(readonly_env), 0o755)
+                chmod(readonly_env, 0o755)
+                rm(readonly_dir; recursive=true, force=true)
+            end
+        end
+    end
+
+    @testset "Environment Selection Edge Cases" begin
+        selection_depot = mktempdir()
+        old_depot = copy(DEPOT_PATH)
+        old_project = Base.active_project()
+        try
+            empty!(DEPOT_PATH)
+            push!(DEPOT_PATH, selection_depot)
+            env_root = joinpath(selection_depot, "environments")
+
+            function write_selection_env(name, uuid; julia_version=string(VERSION))
+                directory = joinpath(env_root, name)
+                mkpath(directory)
+                write(joinpath(directory, "Project.toml"), "[deps]\nFoo = \"$uuid\"\n")
+                write(
+                    joinpath(directory, "Manifest.toml"),
+                    "julia_version = \"$julia_version\"\nmanifest_format = \"2.0\"\n" *
+                    "[[deps.Foo]]\nuuid = \"$uuid\"\nversion = \"1.0.0\"\n",
+                )
+            end
+
+            uuid_a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+            uuid_b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            write_selection_env("older_minor", uuid_a; julia_version="1.10.0")
+            write_selection_env("different_uuid", uuid_b)
+            write_selection_env(".staging", uuid_a)
+
+            @test !first(QuickEnv.check_manifest_compat(["older_minor"]))
+            @test first(QuickEnv.check_manifest_compat(
+                ["older_minor"]; require_current_julia=false
+            ))
+            @test !first(QuickEnv.check_manifest_compat([
+                "older_minor", "different_uuid"
+            ]; require_current_julia=false))
+            @test !(".staging" in QuickEnv.find_matching_envs(["Foo"]))
+
+            QuickEnv.handle_matching_or_fallback(
+                ["Dates"], "stdlib_fallback", String[], false, true, false, ""
+            )
+            @test basename(dirname(Base.active_project())) == "stdlib_fallback"
+        finally
+            empty!(DEPOT_PATH)
+            append!(DEPOT_PATH, old_depot)
+            old_project !== nothing && Base.set_active_project(old_project)
+            rm(selection_depot; recursive=true, force=true)
+        end
     end
 end

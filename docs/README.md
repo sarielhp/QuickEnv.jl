@@ -5,7 +5,7 @@
 > **Related Documentation**:
 > - **[Architecture & Design Deep-Dive](DESIGN.md)**: Fast stitching vs. stacking, bitmask solver, caching internals.
 > - **[Tradeoffs Analysis](tradeoffs.md)**: Pros vs. cons and startup performance comparison.
-> - **[Why Recompilation Happens & FAQ](faq_recompile.md)**: Deep-dive into Julia precompilation mechanics and how QuickEnv guarantees zero recompilation.
+> - **[Why Recompilation Happens & FAQ](faq_recompile.md)**: Deep-dive into Julia precompilation mechanics and how QuickEnv preserves cache reuse.
 > - **[`jlenv` CLI Manual](jlenv.md)**: Command reference for environment inspection and housekeeping.
 > - **[Guidelines for AI Agents](AGENTS.md)**: System prompts and instructions for AI coding assistants.
 
@@ -91,13 +91,13 @@ using QuickEnv # desc: "Data analysis tools"
 ```
 
 #### D. Excluded Environments (`exclude`)
-Prevents specific environments from being considered during matching. Using `global` acts as a wildcard excluding standard versioned environments (e.g., `@v1.12`):
+Prevents specific named environments from being considered during matching. Standard versioned environments (for example `@v1.12`) are always skipped, so listing `global` is unnecessary:
 ```julia
-# quickenv_exclude: global, broken_plotting
+# quickenv_exclude: broken_plotting
 ```
 or inline:
 ```julia
-using QuickEnv # exclude: global
+using QuickEnv # exclude: broken_plotting
 ```
 
 #### E. Local Directory Project Mode (`# local`)
@@ -135,8 +135,8 @@ or standalone:
 
 When `using QuickEnv` runs in a script:
 1. **Script Parsing**: Statically scans the top-level script (and statically included `.jl` files) for `using`/`import` statements and magic comments.
-2. **Script-Level Cache Check ($O(1)$)**: Checks if the script path and modification timestamp (`mtime`) match a known valid environment in `~/.julia/quickenv/cache.toml`.
+2. **Script-Level Cache Check**: Validates content digests for the entry script and static includes, plus target and source environment state, against `~/.julia/quickenv/cache.toml`.
 3. **Existing Environment Match**: Checks if any single named environment in `~/.julia/environments/` satisfies all requested packages.
-4. **Bitmask Set-Cover & Fast Manifest Stitching (<5ms)**: Finds minimal compatible combinations of existing environments and synthesizes a merged `Project.toml` and `Manifest.toml` into `@auto_<hash>` without Pkg SAT solving or recompilation.
+4. **Bitmask Cover Search & Manifest Stitching**: Searches for a minimum-count compatible cover, then synthesizes a merged `Project.toml` and `Manifest.toml` into `@auto_<hash>` without invoking Pkg's resolver.
 5. **Partial Stitching & Incremental Bootstrap**: Pre-stitches known package manifests and runs `Pkg.add` only for new missing dependencies.
 6. **Project Activation**: Activates the resolved project via Julia's internal `Base.set_active_project`.

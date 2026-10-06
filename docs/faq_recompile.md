@@ -20,7 +20,7 @@ This FAQ explains why this happens in standard Julia and how `QuickEnv.jl` preve
 5. [Why is the immediate second run fast if the first run recompiled?](#5-why-is-the-immediate-second-run-fast-if-the-first-run-recompiled)
 6. [If the second run is fast, why does recompilation happen again days later?](#6-if-the-second-run-is-fast-why-does-recompilation-happen-again-days-later)
 7. [Why does loading tools like `BenchmarkTools` or `Revise` from the global environment cause recompilation?](#7-why-does-loading-tools-like-benchmarktools-or-revise-from-the-global-environment-cause-recompilation)
-8. [How does QuickEnv guarantee zero recompilation during fast stitching?](#8-how-does-quickenv-guarantee-zero-recompilation-during-fast-stitching)
+8. [How does QuickEnv preserve compile-cache reuse during fast stitching?](#8-how-does-quickenv-preserve-compile-cache-reuse-during-fast-stitching)
 9. [How does QuickEnv compare to DrWatson's `@quickactivate`?](#9-how-does-quickenv-compare-to-drwatsons-quickactivate)
 10. [How do I intentionally update packages in QuickEnv environments?](#10-how-do-i-intentionally-update-packages-in-quickenv-environments)
 
@@ -101,11 +101,11 @@ Because a single Julia process cannot load two different versions of `Compat.jl`
 
 ---
 
-## 8. How does QuickEnv guarantee zero recompilation during fast stitching?
+## 8. How does QuickEnv preserve compile-cache reuse during fast stitching?
 
-1. **Transitive Hash Validation ($O(N)$)**: Verifies that all shared dependencies between source environments have identical UUIDs, versions, and `git-tree-sha1` hashes in `<2 ms`.
+1. **Strict Manifest Validation**: Compares complete shared manifest entries by UUID after normalizing paths.
 2. **Concrete Manifest Synthesis**: Writes a complete, locked `Manifest.toml` to disk in `~/.julia/environments/@auto_<hash>/`.
-3. **Exact Cache Matching**: Because `git-tree-sha1` hashes match the parent environments, Julia loads the existing `.ji` cache files immediately.
+3. **Cache-Preserving Identity**: Stitched entries retain their source identities, so Julia can reuse an existing package image when its Julia version, CPU target, runtime flags, and complete dependency graph also match. QuickEnv cannot guarantee that a cache exists or has not been evicted.
 
 *(If a dependency conflict exists, QuickEnv rejects fast stitching and falls back to a clean solve).*
 

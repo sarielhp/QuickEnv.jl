@@ -22,16 +22,16 @@ This document outlines the practical tradeoffs, advantages, and limitations of u
 
 ## 2. Resolution Performance on Cold Runs (First Run)
 
-On the first execution of a script, QuickEnv can be significantly faster than standard `Pkg.add` environment creation because it avoids running Pkg's SAT solver across known packages and avoids recompilation.
+On the first execution of a script, QuickEnv can be faster than standard `Pkg.add` environment creation when it can reuse compatible resolved metadata and compile caches.
 
 ### Case A: Dependencies Fully Covered by Existing Environments (Fast-Stitching)
 * **Standard `Pkg.add` from Scratch**: 5,000–30,000+ ms (evaluates dependency graphs across the registry and precompiles packages).
-* **QuickEnv Fast Stitching**: **<5 ms** (unifies pre-existing `Manifest.toml` files in memory and writes them to disk with zero recompilation).
+* **QuickEnv Fast Stitching**: Commonly milliseconds for small environment pools; it validates and unifies existing manifests without invoking Pkg's resolver. Julia can reuse compatible compile caches but may compile when no valid cache exists.
 
 ### Case B: Partial Cover + Incremental Solve (Optimization A)
 When a script requires packages that are only partially covered by existing environments (e.g., 4 known packages + 1 new package):
 * QuickEnv **pre-stitches the base manifest** containing the 4 known packages in `<2 ms`.
-* It runs `Pkg.add` **only on the 1 missing package**, treating the pre-populated manifest as fixed constraints.
+* It asks `Pkg.add` to add **only the 1 missing package**, preferring the pre-populated manifest while allowing Julia's resolver to change it when compatibility requires that.
 
 #### Measured Cold Resolution Times (`benchmarks/benchmark_opt_a.rb`):
 | Approach | Resolution Time | Difference |
@@ -40,8 +40,8 @@ When a script requires packages that are only partially covered by existing envi
 | QuickEnv Optimization A (Pre-stitch base + solve 1 package) | 4,325 ms | **2,530 ms faster (36.9% reduction)** |
 
 > **Why this is faster**:
-> 1. **Constrained SAT Solving**: Pkg does not need to explore versions for the pre-stitched base packages.
-> 2. **Zero Recompilation Cascade**: Because base package versions and `git-tree-sha1` hashes are pinned in the manifest, Pkg cannot select conflicting sub-dependency versions that would trigger recompilation of the base packages.
+> 1. **Constrained SAT Solving**: Exact direct-package bounds reduce the version choices for the pre-stitched base packages.
+> 2. **Preserved Base Graph**: QuickEnv uses exact direct-package compatibility bounds and `PRESERVE_TIERED` while adding missing packages. This prefers the stitched dependency graph while allowing Pkg to relax preservation if required for a valid combined solution.
 >
 > *(A reproducible benchmark is provided in `benchmarks/benchmark_opt_a.rb`).*
 
@@ -67,15 +67,15 @@ When a script requires packages that are only partially covered by existing envi
 2. **Flagless Execution & Shebang Compatibility**:
    * Scripts can be executed directly as `./script.jl` or `julia script.jl` without passing `--project` flags.
 3. **Automatic Multi-Environment Reuse (Fast Stitching)**:
-   * Reuses already-compiled packages across multiple shared environments by synthesizing a combined `Manifest.toml` in <5 ms without re-running the Pkg SAT solver or recompiling packages.
+   * Preserves package identities across shared environments by synthesizing a combined manifest without invoking Pkg's resolver. Compatible compile caches can be reused.
 4. **Faster Cold Resolution (Partial Stitching)**:
    * Constrains Pkg's SAT solver when adding new packages by pre-populating manifests from existing environments, saving seconds on cold bootstraps.
 5. **Zero Directory Pollution**:
    * Does not create `Project.toml` or `Manifest.toml` files in script working directories unless explicitly requested via `# local`.
 6. **Typo and Casing Detection**:
    * Identifies package casing mismatches (e.g., `using cairo` vs `using Cairo`) and typos against the General Registry before failure.
-7. **Near-Zero Disk Footprint for Environments**:
-   * In Julia's content-addressed architecture, environments contain only tiny text pointers (`Project.toml` / `Manifest.toml`). Creating dozens of dedicated or auto-generated environments costs only kilobytes of disk space and duplicates zero package code or compiled binaries.
+7. **Low Disk Footprint for Environments**:
+   * Julia environments contain metadata and reuse content-addressed package sources and artifacts. Manifests can range from kilobytes to hundreds of kilobytes, but they do not duplicate package source trees or artifacts.
 8. **LLM Context & Token Efficiency for AI Agents**:
    * Eliminates multi-turn package error-retry loops and verbose `Pkg.add` terminal output in AI coding agent context windows, saving thousands of tokens per task. (See **[docs/AGENTS.md](AGENTS.md#5-token-efficiency-eliminating-multi-turn-error-loops)**).
 
@@ -91,5 +91,5 @@ When a script requires packages that are only partially covered by existing envi
    * Published Julia packages, libraries, and large multi-module applications should use standard `Project.toml` and committed `Manifest.toml` files tracked in Git for exact reproducibility.
 4. **Static Include Limitation**:
    * QuickEnv can only discover dependencies in files included via static string literals (`include("file.jl")`). Dynamic includes (e.g., `include(joinpath(@__DIR__, var))`) cannot be analyzed before runtime.
-5. **Heuristic Set-Cover**:
-   * When multiple combinations of named environments cover a script's dependencies, QuickEnv selects a minimal combination based on an extraneous package penalty heuristic. While deterministic, this may select a different combination than a user would manually choose.
+5. **Time-Bounded Cover Search**:
+   * Branch-and-bound minimizes source-environment count and then extraneous direct dependencies. With a large environment pool it may hit its time budget and use the best complete cover found so far or fall back to Pkg.

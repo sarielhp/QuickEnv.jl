@@ -383,7 +383,8 @@ function prune_environments()
 
     auto_envs = filter(
         d ->
-            (startswith(d, "auto_") || startswith(d, "test_")) &&
+            (startswith(d, "auto_") || startswith(d, "test_") ||
+             occursin(r"^\..+\.stage\.", d)) &&
             isdir(joinpath(ENV_DIR, d)),
         readdir(ENV_DIR),
     )

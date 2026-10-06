@@ -44,7 +44,7 @@ When creating or editing standalone Julia scripts (.jl files):
 ### Solution With QuickEnv:
 * **Zero Terminal Commands**: The agent simply writes `using QuickEnv`.
 * **Automatic Bootstrap**: If dependencies are missing, QuickEnv installs them into an isolated named environment (`@auto_<hash>`) without touching the user's global `@v1.x` environment.
-* **Instant Cross-Script Reuse**: If the agent creates multiple scripts sharing packages, subsequent scripts launch in `<1 ms` without re-downloading or recompiling packages.
+* **Fast Cross-Script Reuse**: If the agent creates multiple scripts sharing packages, subsequent scripts can reuse resolved environments and compatible compile caches without re-downloading packages.
 
 ---
 

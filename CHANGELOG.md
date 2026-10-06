@@ -2,6 +2,21 @@
 
 All notable changes to the `QuickEnv` package will be documented in this file.
 
+## [0.5.0] - 2026-10-05
+
+### Changed
+- Replaced line-oriented import discovery with Julia AST traversal; directives are now read only from actual comments outside strings and block comments.
+- Replaced greedy cover selection with time-bounded branch-and-bound that integrates manifest compatibility.
+- Script and resolution caches now validate content digests for scripts, static includes, projects, manifests, and stitch sources.
+- Cache updates use PID locks; stitched environments are prepared in staging directories and installed under per-environment locks.
+- Manifest stitching now fails closed on missing, malformed, cross-Julia, or structurally different entries and preserves exact direct-package compatibility bounds.
+- Added opt-in `QUICKENV_ISOLATE_LOAD_PATH=true` isolation; default activation preserves caller load paths so included helpers can import QuickEnv safely.
+- Fixed generated manifest array-of-tables structure, import aliases, empty-line parsing, comment directive boundaries, stdlib-only fallbacks, malformed caches, read-only depots, cross-minor singleton reuse, staging-directory discovery, and conflicting same-name UUIDs.
+- Partial bootstrap now uses `PRESERVE_TIERED` and retries cleanly when a stitched base cannot be extended.
+- Bumped package version to 0.5.0.
+- Auto-environment names now use stable SHA-256-derived package, source-state, and Julia-version identities.
+- Documentation now distinguishes resolver avoidance and cache reuse from a guarantee that Julia will never compile.
+
 ## [0.4.2] - 2026-10-05
 
 ### Added
